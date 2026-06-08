@@ -31,7 +31,7 @@ export default function Page() {
         if (cancelled) return;
         tries += 1;
         setConnecting(true);
-        if (tries < 40) setTimeout(tick, 1500);
+        if (tries < 80) setTimeout(tick, 700); // poll briskly so we reconnect ASAP
       }
     };
     tick();

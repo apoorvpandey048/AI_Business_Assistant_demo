@@ -37,9 +37,37 @@ class DocumentIndex:
         self.chunks = {c["chunk_id"]: c for c in chunks}
         ids = [c["chunk_id"] for c in chunks]
         texts = [c["text"] for c in chunks]
-        vectors = self.embedder.embed(texts)
+        vectors = self._embed_cached(texts)
         self.store.add(ids, vectors)
         self.bm25.build(ids, texts)
+
+    def _embed_cached(self, texts: list[str]) -> np.ndarray:
+        """Cache document embeddings on disk so (re)starts don't re-call the API.
+        Keyed by backend + corpus content, so any change re-embeds automatically."""
+        import hashlib
+
+        cdir = self.s.cache_dir / "embeddings"
+
+        def path_for(backend: str):
+            h = hashlib.sha256(backend.encode("utf-8"))
+            for t in texts:
+                h.update(b"\x00")
+                h.update(t.encode("utf-8"))
+            return cdir / (h.hexdigest()[:40] + ".npy")
+
+        cached = path_for(self.embedder.backend)
+        if cached.exists():
+            try:
+                return np.load(cached)
+            except Exception:
+                pass
+        vectors = self.embedder.embed(texts)  # may downgrade backend on failure
+        try:
+            cdir.mkdir(parents=True, exist_ok=True)
+            np.save(path_for(self.embedder.backend), vectors)
+        except Exception:
+            pass
+        return vectors
 
     @property
     def n_chunks(self) -> int:

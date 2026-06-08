@@ -107,8 +107,9 @@ class EmbeddingModel:
             and bool(s.openai_key)
         )
 
-        # Ordered candidates; each is PROBED with a real encode so we never pick a
-        # backend that fails at runtime (e.g. a rotated key) — the engine always builds.
+        # Ordered candidates, selected by construction only (no network probe — that
+        # added a slow cold API call to startup). Runtime failures (e.g. a rotated key)
+        # are caught in embed() and degrade to the hashing backend, so we never crash.
         candidates: list = []
         if want_openai and openai is not None:
             candidates.append(lambda: _OpenAIEmbedder(s))
@@ -119,9 +120,7 @@ class EmbeddingModel:
         impl = None
         for make in candidates:
             try:
-                cand = make()
-                cand.encode(["probe"])  # verify it actually works before committing
-                impl = cand
+                impl = make()
                 break
             except Exception:
                 continue
@@ -137,7 +136,16 @@ class EmbeddingModel:
     def embed(self, texts: list[str]) -> np.ndarray:
         if not texts:
             return np.zeros((0, 1), dtype=np.float32)
-        return self.impl.encode(texts)
+        try:
+            return self.impl.encode(texts)
+        except Exception:
+            # configured backend failed at runtime (e.g. rotated key / network) —
+            # degrade to the always-available deterministic hashing backend.
+            if not isinstance(self.impl, _HashingEmbedder):
+                self.impl = _HashingEmbedder()
+                self.backend = self.impl.backend
+                return self.impl.encode(texts)
+            raise
 
     def embed_one(self, text: str) -> np.ndarray:
         return self.embed([text])[0]
