@@ -1,0 +1,12 @@
+# Core runtime — light, pure-python where possible, fast to install.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.6
+pydantic-settings>=2.2
+anthropic>=0.40
+pypdf>=4.2
+reportlab>=4.1
+rank-bm25>=0.2.2
+sqlglot>=23.0
+numpy>=1.26
+python-dotenv>=1.0

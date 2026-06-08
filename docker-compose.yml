@@ -1,0 +1,51 @@
+# One command to run the whole demo:  docker compose up --build
+#
+#   • API  →  http://localhost:8000  (FastAPI; /docs for the OpenAPI UI)
+#   • UI   →  http://localhost:3000  (Next.js inspector)
+#
+# Live Claude answers: put ANTHROPIC_API_KEY in a .env file next to this file.
+# Without a key the demo runs in deterministic OFFLINE mode (still fully traceable).
+#
+# Optional production swaps:
+#   • True BGE-M3 multilingual embeddings:  build arg INSTALL_ML=true (see Dockerfile)
+#   • Qdrant vector store:  `docker compose --profile qdrant up` + ABA_VECTOR_BACKEND=qdrant
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_ML: "false"
+    ports:
+      - "8000:8000"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ABA_OFFLINE_MODE: ${ABA_OFFLINE_MODE:-auto}
+      ABA_MODEL_GENERATION: ${ABA_MODEL_GENERATION:-claude-opus-4-8}
+      ABA_MODEL_ROUTER: ${ABA_MODEL_ROUTER:-claude-sonnet-4-6}
+      ABA_MODEL_SQL: ${ABA_MODEL_SQL:-claude-sonnet-4-6}
+      ABA_VECTOR_BACKEND: ${ABA_VECTOR_BACKEND:-numpy}
+      ABA_QDRANT_URL: http://qdrant:6333
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    profiles: ["qdrant"]
+    ports:
+      - "6333:6333"

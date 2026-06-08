@@ -1,0 +1,31 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Secrets / env
+.env
+.env.local
+
+# LLM response cache (machine-specific). The demo data (data/business.db, data/pdfs/*)
+# IS committed so the repo is instantly runnable and the PDFs are browsable on GitHub;
+# regenerate any time with scripts/seed_data.py + scripts/make_pdfs.py.
+data/cache/
+
+# Node / Next
+ui/node_modules/
+ui/.next/
+ui/out/
+
+# OS / editor
+.DS_Store
+*.log
+
+# Internal working notes — kept local, not part of the published demo.
+context.md
+docs/implementation-plan.md
+docs/task-tracker.md
+docs/demo-script.md
+docs/loom-outline.md
+docs/client-explainer.md

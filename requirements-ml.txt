@@ -1,0 +1,10 @@
+# Optional ML stack for production-grade retrieval quality.
+# Installed in the Docker image so the demo uses true multilingual embeddings (BGE-M3 / e5)
+# and a cross-encoder reranker. The app runs WITHOUT these via a graceful hashing fallback,
+# so local dev / CI does not require the multi-GB download.
+#
+#   pip install -r requirements-ml.txt
+#
+sentence-transformers>=3.0
+torch>=2.2
+qdrant-client>=1.9
