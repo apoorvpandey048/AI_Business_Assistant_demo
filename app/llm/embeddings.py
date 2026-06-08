@@ -126,6 +126,7 @@ class EmbeddingModel:
                 continue
         self.impl = impl or _HashingEmbedder()
         self.backend = self.impl.backend
+        self._query_cache: dict[str, np.ndarray] = {}
 
     @classmethod
     def get(cls) -> "EmbeddingModel":
@@ -148,4 +149,9 @@ class EmbeddingModel:
             raise
 
     def embed_one(self, text: str) -> np.ndarray:
-        return self.embed([text])[0]
+        # memoize query embeddings so repeated/clicked questions don't re-embed
+        v = self._query_cache.get(text)
+        if v is None:
+            v = self.embed([text])[0]
+            self._query_cache[text] = v
+        return v

@@ -216,8 +216,10 @@ def _mode(calls: list[LLMCall]) -> str:
     modes = {c.mode for c in calls}
     if not modes:
         return "deterministic"
-    if modes == {"live"}:
-        return "live"
-    if "live" not in modes:
-        return "offline"
-    return "mixed"
+    if "live" in modes:
+        return "live" if modes == {"live"} else "mixed"
+    if modes == {"cached"}:
+        return "cached"          # replay of a previously-generated live answer
+    if "cached" in modes:
+        return "cached"
+    return "offline"             # deterministic fallbacks only

@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     model_sql: str = "claude-sonnet-4-6"
     offline_mode: str = "auto"  # auto | always | never
     llm_max_tokens: int = 2000
+    # Serve an identical prior request from cache instead of re-calling the LLM.
+    # Makes repeated/warmed questions instant (great for demos). New questions still
+    # go live. Set false to always call the model.
+    cache_first: bool = True
 
     # --- Embeddings --------------------------------------------------------
     # backend: "auto" (OpenAI embeddings when provider=openai on api.openai.com,

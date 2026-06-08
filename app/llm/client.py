@@ -120,6 +120,13 @@ class LLMClient:
         key = self._key(purpose, model, system, user)
         t0 = time.perf_counter()
 
+        # cache-first: replay an identical prior call instantly (snappy demos).
+        if self.s.cache_first and key in self._cache:
+            return self._cache[key], LLMCall(
+                purpose=purpose, model=model, mode="cached",
+                duration_ms=round((time.perf_counter() - t0) * 1000, 1),
+            )
+
         if self.s.use_live_llm and self._live_client() is not None:
             try:
                 result, usage = self._dispatch(model, system, user, schema, max_tokens)
