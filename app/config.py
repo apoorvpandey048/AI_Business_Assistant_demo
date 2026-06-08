@@ -43,7 +43,11 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 2000
 
     # --- Embeddings --------------------------------------------------------
-    embedding_model: str = "BAAI/bge-m3"
+    # backend: "auto" (OpenAI embeddings when provider=openai on api.openai.com,
+    # else local model, else deterministic hashing), or force "openai"/"local"/"hashing".
+    embedding_backend: str = "auto"
+    embedding_model: str = "BAAI/bge-m3"               # local model name
+    openai_embed_model: str = "text-embedding-3-small"  # used for the openai backend
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     enable_rerank: bool = True
 

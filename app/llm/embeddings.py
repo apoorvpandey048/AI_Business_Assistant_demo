@@ -1,37 +1,54 @@
-"""Multilingual embeddings.
+"""Multilingual embeddings with a backend ladder.
 
-Default (production / Docker): a local sentence-transformers model — BGE-M3 or
-multilingual-e5 — which handles English + Hebrew in one vector space, runs offline,
-and needs no API key.
+Selection (ABA_EMBEDDING_BACKEND, default "auto"):
+- **openai**  → OpenAI-compatible embeddings (e.g. text-embedding-3-small): high
+                quality, multilingual (incl. Hebrew), cheap, no heavy local model.
+                Auto-selected when provider=openai on api.openai.com with a key.
+- **local**   → a local sentence-transformers model (BGE-M3 / e5): offline, no key.
+- **hashing** → deterministic character-n-gram hashing (no deps). Always available;
+                uses a stable hash (NOT Python's salted hash) so retrieval is
+                reproducible across processes.
 
-Fallback (when the model isn't installed, e.g. fast local dev / CI): a deterministic
-character-n-gram hashing embedder. It is multilingual-agnostic (works on Hebrew too)
-and keeps the dense branch meaningful enough to demonstrate the pipeline. The trace
-always reports which backend produced the vectors, so nothing is hidden.
+The trace always reports which backend produced the vectors.
 """
 from __future__ import annotations
 
+import hashlib
 import re
+import struct
 from typing import Optional
 
 import numpy as np
 
 from app.config import get_settings
 
+try:
+    import openai
+except Exception:  # pragma: no cover
+    openai = None  # type: ignore
+
 _WORD = re.compile(r"\w+", re.UNICODE)
 
 
-class _HashingEmbedder:
-    """Deterministic, dependency-free embedding: hashed word + char n-grams, TF, L2."""
+def _stable_hash(s: str) -> int:
+    # deterministic across processes (Python's builtin hash() is salted by PYTHONHASHSEED)
+    return struct.unpack("<I", hashlib.blake2b(s.encode("utf-8"), digest_size=4).digest())[0]
 
-    backend = "hashing-fallback"
+
+def _l2(v: np.ndarray) -> np.ndarray:
+    n = np.linalg.norm(v, axis=1, keepdims=True)
+    n[n == 0] = 1.0
+    return v / n
+
+
+class _HashingEmbedder:
+    backend = "hashing (deterministic)"
 
     def __init__(self, dim: int = 512) -> None:
         self.dim = dim
 
     def _features(self, text: str):
-        text = text.lower()
-        for w in _WORD.findall(text):
+        for w in _WORD.findall((text or "").lower()):
             yield f"w:{w}"
             padded = f"#{w}#"
             for n in (3, 4):
@@ -41,41 +58,70 @@ class _HashingEmbedder:
     def encode(self, texts: list[str]) -> np.ndarray:
         out = np.zeros((len(texts), self.dim), dtype=np.float32)
         for i, t in enumerate(texts):
-            for feat in self._features(t or ""):
-                h = hash(feat) % self.dim
-                out[i, h] += 1.0
-        norms = np.linalg.norm(out, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        return out / norms
+            for feat in self._features(t):
+                out[i, _stable_hash(feat) % self.dim] += 1.0
+        return _l2(out)
 
 
 class _SentenceTransformerEmbedder:
     def __init__(self, model_name: str) -> None:
-        from sentence_transformers import SentenceTransformer  # heavy import, lazy
+        from sentence_transformers import SentenceTransformer
 
         self.model = SentenceTransformer(model_name)
-        self.backend = f"sentence-transformers:{model_name}"
+        self.backend = f"local:{model_name}"
 
     def encode(self, texts: list[str]) -> np.ndarray:
-        vecs = self.model.encode(
-            texts, normalize_embeddings=True, show_progress_bar=False
+        return np.asarray(
+            self.model.encode(texts, normalize_embeddings=True, show_progress_bar=False),
+            dtype=np.float32,
         )
-        return np.asarray(vecs, dtype=np.float32)
+
+
+class _OpenAIEmbedder:
+    def __init__(self, settings) -> None:
+        self.client = openai.OpenAI(
+            api_key=settings.openai_key or "no-key", base_url=settings.openai_base_url
+        )
+        self.model = settings.openai_embed_model
+        self.backend = f"openai:{self.model}"
+
+    def encode(self, texts: list[str]) -> np.ndarray:
+        vecs: list[list[float]] = []
+        for i in range(0, len(texts), 256):
+            batch = [t if (t and t.strip()) else " " for t in texts[i:i + 256]]
+            resp = self.client.embeddings.create(model=self.model, input=batch)
+            vecs.extend(d.embedding for d in resp.data)
+        return _l2(np.asarray(vecs, dtype=np.float32))
 
 
 class EmbeddingModel:
-    """Singleton-ish wrapper that prefers the local model, falls back gracefully."""
-
     _instance: Optional["EmbeddingModel"] = None
 
     def __init__(self) -> None:
         s = get_settings()
-        self.impl = None
-        try:
-            self.impl = _SentenceTransformerEmbedder(s.embedding_model)
-        except Exception:
-            self.impl = _HashingEmbedder()
-        self.backend = self.impl.backend
+        pref = (s.embedding_backend or "auto").lower()
+        want_openai = pref == "openai" or (
+            pref == "auto"
+            and s.llm_provider == "openai"
+            and "openai.com" in (s.openai_base_url or "")
+            and bool(s.openai_key)
+        )
+
+        impl = None
+        if want_openai and openai is not None:
+            try:
+                impl = _OpenAIEmbedder(s)
+            except Exception:
+                impl = None
+        if impl is None and pref in ("auto", "local"):
+            try:
+                impl = _SentenceTransformerEmbedder(s.embedding_model)
+            except Exception:
+                impl = None
+        if impl is None:
+            impl = _HashingEmbedder()
+        self.impl = impl
+        self.backend = impl.backend
 
     @classmethod
     def get(cls) -> "EmbeddingModel":
