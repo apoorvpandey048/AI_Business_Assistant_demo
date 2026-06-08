@@ -162,6 +162,21 @@ Click any citation in the UI to jump to and highlight the exact evidence.
 are local → **$0**. The full 8-question demo ≈ **$0.20**. A single pay-as-you-go API key is
 all that's needed — no Claude Max subscription (that powers Claude.ai/Code, not this API).
 
+**LLM provider is swappable (incl. free options).** The engine is provider-agnostic. Set
+`ABA_LLM_PROVIDER=openai` to use **any OpenAI-compatible endpoint** — and several are free:
+
+| Provider | Cost | `ABA_OPENAI_BASE_URL` | Example model |
+|---|---|---|---|
+| **Groq** | free (no card) | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` |
+| **Google Gemini** | free tier | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-2.0-flash` |
+| **Ollama** (local) | free | `http://localhost:11434/v1` | `llama3.1` |
+| OpenAI | paid | `https://api.openai.com/v1` | `gpt-4o` |
+| Anthropic (default) | paid | — | `claude-opus-4-8` |
+
+See `.env.example` for copy-paste configs. With **no key at all**, the demo runs in
+deterministic **offline mode** ($0) — the routing/retrieval/traceability inspector is
+identical; only the final answer wording is extractive instead of model prose.
+
 ---
 
 ## Project structure

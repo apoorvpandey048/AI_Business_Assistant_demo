@@ -142,6 +142,7 @@ export interface SourceInfo {
 
 export interface AppConfig {
   mode: string;
+  provider: string;
   models: { generation: string; router: string; sql: string };
   embedding_backend: string;
   vector_backend: string;

@@ -22,7 +22,9 @@ PRICES: dict[str, tuple[float, float]] = {
 def call_cost(model: str, input_tokens: int | None, output_tokens: int | None) -> float | None:
     if input_tokens is None and output_tokens is None:
         return None
-    pin, pout = PRICES.get(model, (5.0, 25.0))
+    if model not in PRICES:  # unknown / non-Anthropic (e.g. a free provider) — don't guess
+        return None
+    pin, pout = PRICES[model]
     return round((input_tokens or 0) * pin / 1e6 + (output_tokens or 0) * pout / 1e6, 6)
 
 
@@ -31,10 +33,14 @@ def summarize(calls: list[LLMCall]) -> CostSummary:
     out_tok = sum(c.output_tokens or 0 for c in calls)
     live = [c for c in calls if c.mode == "live"]
     total = round(sum(c.cost_usd or 0.0 for c in calls), 6)
+    priced = [c for c in live if c.cost_usd is not None]
     if not live:
         note = "Offline (deterministic / cached) — $0.00. Embeddings are local (no API cost)."
+    elif not priced:
+        note = (f"{len(live)} live call(s) via a non-Anthropic provider — token pricing not "
+                f"tracked here. Embeddings local (no API cost).")
     else:
-        note = (f"{len(live)} live Claude call(s); embeddings local (no API cost). "
+        note = (f"{len(live)} live call(s); embeddings local (no API cost). "
                 f"≈ ${total:.4f} for this answer.")
     return CostSummary(input_tokens=in_tok, output_tokens=out_tok,
                        total_usd=total, live_calls=len(live), note=note)

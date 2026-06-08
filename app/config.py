@@ -25,9 +25,17 @@ class Settings(BaseSettings):
     )
 
     # --- LLM ---------------------------------------------------------------
-    # Read the (unprefixed) Anthropic key directly from the environment.
-    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+    # provider: "anthropic" or "openai" (the latter is any OpenAI-compatible
+    # endpoint — OpenAI, Groq, Gemini's compat API, Ollama, OpenRouter, …).
     llm_provider: str = "anthropic"
+
+    # Anthropic (key read unprefixed from the environment).
+    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+
+    # OpenAI-compatible (key + base_url). Point base_url at the provider you want.
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    openai_base_url: str = "https://api.openai.com/v1"
+
     model_generation: str = "claude-opus-4-8"
     model_router: str = "claude-sonnet-4-6"
     model_sql: str = "claude-sonnet-4-6"
@@ -78,9 +86,29 @@ class Settings(BaseSettings):
         return self.data_path / "cache"
 
     @property
+    def anthropic_key(self) -> str:
+        return (self.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+
+    @property
+    def openai_key(self) -> str:
+        return (
+            self.openai_api_key
+            or os.environ.get("OPENAI_API_KEY")
+            or os.environ.get("ABA_OPENAI_API_KEY")
+            or ""
+        ).strip()
+
+    @property
+    def is_local_endpoint(self) -> bool:
+        b = self.openai_base_url or ""
+        return any(x in b for x in ("localhost", "127.0.0.1", "11434"))
+
+    @property
     def has_api_key(self) -> bool:
-        key = self.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
-        return bool(key and key.strip())
+        if self.llm_provider == "openai":
+            # local endpoints (e.g. Ollama) need no key
+            return bool(self.openai_key) or self.is_local_endpoint
+        return bool(self.anthropic_key)
 
     @property
     def use_live_llm(self) -> bool:

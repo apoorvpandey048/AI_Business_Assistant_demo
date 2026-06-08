@@ -27,6 +27,7 @@ def config() -> dict:
     eng = get_engine()
     return {
         "mode": "live" if s.use_live_llm else "offline",
+        "provider": s.llm_provider,
         "models": {
             "generation": s.model_generation,
             "router": s.model_router,

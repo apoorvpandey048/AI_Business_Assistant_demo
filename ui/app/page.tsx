@@ -54,7 +54,7 @@ export default function Page() {
         {config && (
           <div className="flex flex-wrap items-center gap-2">
             <Pill tone={config.mode === "live" ? "emerald" : "amber"}>
-              {config.mode === "live" ? "● live (Claude)" : "● offline demo"}
+              {config.mode === "live" ? `● live (${config.provider})` : "● offline demo"}
             </Pill>
             <Pill tone="indigo">gen: {config.models.generation}</Pill>
             <Pill tone="sky">router: {config.models.router}</Pill>

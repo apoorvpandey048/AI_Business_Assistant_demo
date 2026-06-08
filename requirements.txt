@@ -4,6 +4,7 @@ uvicorn[standard]>=0.27
 pydantic>=2.6
 pydantic-settings>=2.2
 anthropic>=0.40
+openai>=1.40
 pypdf>=4.2
 reportlab>=4.1
 rank-bm25>=0.2.2
