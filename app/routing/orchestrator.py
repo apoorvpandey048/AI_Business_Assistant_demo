@@ -141,6 +141,7 @@ class Orchestrator:
         # Either the rows already carry a document reference (pdf_file/doc_file), or we
         # map the customers they reference to their contract documents via a linking query.
         doc_filter = {}
+        cust_map = _pdf_owner_map(strace.rows)  # pdf/doc file -> owning entity name
         if decision.agentic and strace.valid and strace.rows:
             direct = _documents_from_rows(strace.rows)
             if direct:
@@ -156,6 +157,7 @@ class Orchestrator:
                     trace.sql_executions.append(link_trace)
                     if pdfs:
                         doc_filter = {"documents": pdfs}
+                        cust_map.update(_pdf_owner_map(link_trace.rows))
                         trace.notes.append(
                             f"Step 2 — linked {len(names)} customer(s) {names} → "
                             f"{len(pdfs)} contract document(s); restricting document retrieval to them."
@@ -167,6 +169,13 @@ class Orchestrator:
             doc_filter = {**doc_filter, "languages": decision.languages}
         doc_ev, dtrace = self.documents.retrieve(doc_q, filters=doc_filter)
         trace.document_retrieval = dtrace
+        # Stamp the owning entity onto each passage so the model can't misattribute a
+        # generic clause (e.g. "Provider may suspend…") to the wrong customer.
+        for e in doc_ev:
+            owner = cust_map.get(e.document)
+            if owner:
+                e.extra["owner"] = owner
+                e.content = f"(From {owner}'s agreement) {e.content}"
         evidence += doc_ev
         n_docs = len(doc_filter.get("documents", [])) if isinstance(doc_filter, dict) else 0
         trace.notes.append(
@@ -186,6 +195,17 @@ def _documents_from_rows(rows: list[dict]) -> list[str]:
             if v and v not in out:
                 out.append(v)
     return out
+
+
+def _pdf_owner_map(rows: list[dict]) -> dict[str, str]:
+    """Map a document file -> its owning entity name, from SQL result rows."""
+    m: dict[str, str] = {}
+    for r in rows:
+        doc = r.get("pdf_file") or r.get("doc_file")
+        owner = r.get("customer") or r.get("name") or r.get("project")
+        if doc and owner:
+            m[doc] = str(owner)
+    return m
 
 
 def _ms(t0: float) -> float:

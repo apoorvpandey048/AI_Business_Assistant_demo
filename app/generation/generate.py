@@ -92,8 +92,9 @@ def generate_answer(question: str, evidence: list[Evidence]):
         schema=_ANSWER_SCHEMA, fallback=lambda: _extractive_fallback(question, evidence),
         max_tokens=1500,
     )
+    answer = (data.get("answer", "") or "").replace("\\n", "\n").strip()
     return (
-        data.get("answer", ""),
+        answer,
         list(data.get("citations", [])),
         bool(data.get("insufficient", False)),
         call,
