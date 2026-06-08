@@ -6,19 +6,86 @@
   color-scheme: dark;
 }
 
+html,
 body {
-  @apply bg-slate-950 text-slate-200 antialiased;
-  background-image:
-    radial-gradient(60rem 40rem at 80% -10%, rgba(56, 102, 245, 0.10), transparent),
-    radial-gradient(50rem 40rem at -10% 10%, rgba(16, 185, 129, 0.06), transparent);
+  @apply text-slate-200 antialiased;
+  background-color: #05070f;
 }
 
-/* thin scrollbars for inspector tables */
-.scroll-thin::-webkit-scrollbar { height: 8px; width: 8px; }
-.scroll-thin::-webkit-scrollbar-thumb { @apply bg-slate-700 rounded; }
+body {
+  background-image:
+    radial-gradient(48rem 36rem at 82% -8%, rgba(99, 102, 241, 0.16), transparent 70%),
+    radial-gradient(42rem 34rem at 4% 4%, rgba(16, 185, 129, 0.10), transparent 70%),
+    radial-gradient(60rem 50rem at 50% 120%, rgba(56, 132, 245, 0.08), transparent 70%);
+  background-attachment: fixed;
+}
 
-.cite-pulse { animation: cite 1.4s ease-out; }
+/* glass surface */
+.surface {
+  @apply rounded-2xl border border-white/[0.07] bg-white/[0.03] backdrop-blur-xl;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.05),
+    0 18px 40px -22px rgba(0, 0, 0, 0.8);
+}
+
+.gradient-text {
+  background: linear-gradient(95deg, #fff 0%, #c7d2fe 45%, #a5f3e8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-slate-700/70;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cite-pulse {
+  animation: cite 1.6s ease-out;
+}
 @keyframes cite {
-  0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.55); }
-  100% { box-shadow: 0 0 0 14px rgba(99, 102, 241, 0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(129, 140, 248, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 16px rgba(129, 140, 248, 0);
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-up {
+  animation: fade-up 0.4s ease-out both;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  animation: shimmer 1.6s infinite;
 }

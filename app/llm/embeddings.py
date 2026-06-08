@@ -107,21 +107,26 @@ class EmbeddingModel:
             and bool(s.openai_key)
         )
 
-        impl = None
+        # Ordered candidates; each is PROBED with a real encode so we never pick a
+        # backend that fails at runtime (e.g. a rotated key) — the engine always builds.
+        candidates: list = []
         if want_openai and openai is not None:
+            candidates.append(lambda: _OpenAIEmbedder(s))
+        if pref in ("auto", "local"):
+            candidates.append(lambda: _SentenceTransformerEmbedder(s.embedding_model))
+        candidates.append(lambda: _HashingEmbedder())
+
+        impl = None
+        for make in candidates:
             try:
-                impl = _OpenAIEmbedder(s)
+                cand = make()
+                cand.encode(["probe"])  # verify it actually works before committing
+                impl = cand
+                break
             except Exception:
-                impl = None
-        if impl is None and pref in ("auto", "local"):
-            try:
-                impl = _SentenceTransformerEmbedder(s.embedding_model)
-            except Exception:
-                impl = None
-        if impl is None:
-            impl = _HashingEmbedder()
-        self.impl = impl
-        self.backend = impl.backend
+                continue
+        self.impl = impl or _HashingEmbedder()
+        self.backend = self.impl.backend
 
     @classmethod
     def get(cls) -> "EmbeddingModel":
