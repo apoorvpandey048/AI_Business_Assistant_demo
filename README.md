@@ -15,6 +15,8 @@ Question → Intent routing → Per-source retrieval (hybrid) → Evidence aggre
 English **and** Hebrew. Designed so future **CRM / email / cloud-storage** sources plug in
 without touching the pipeline.
 
+> 📄 **New here? Start with the [System Overview](docs/overview.md)** ([PDF](docs/AI_Business_Assistant_Overview.pdf)) — a screenshot walkthrough of what it does and how it works.
+
 ---
 
 ## The distinction this demo makes visible
