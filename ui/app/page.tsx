@@ -47,14 +47,22 @@ export default function Page() {
     setLoading(true);
     setError(null);
     setResp(null);
-    try {
-      setResp(await ask(query));
-    } catch {
-      setError("Could not reach the engine. It may still be starting — retrying automatically…");
-      bootstrap();
-    } finally {
-      setLoading(false);
+    // Auto-retry so a brief API hiccup (e.g. a restart) self-heals without re-clicking.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const r = await ask(query);
+        setResp(r);
+        setError(null);
+        setLoading(false);
+        return;
+      } catch {
+        if (attempt === 0) setError("Reaching the engine… retrying.");
+        await new Promise((res) => setTimeout(res, 1200));
+      }
     }
+    setLoading(false);
+    setError("Could not reach the engine after several tries. Is the API running? (docker compose up -d)");
+    bootstrap();
   };
 
   return (
