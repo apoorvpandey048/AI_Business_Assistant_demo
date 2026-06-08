@@ -168,9 +168,10 @@ class Orchestrator:
         doc_ev, dtrace = self.documents.retrieve(doc_q, filters=doc_filter)
         trace.document_retrieval = dtrace
         evidence += doc_ev
+        n_docs = len(doc_filter.get("documents", [])) if isinstance(doc_filter, dict) else 0
         trace.notes.append(
             f"Step 3 — document retrieval"
-            + (f" (filtered to {len(doc_filter['documents'])} doc(s))" if doc_filter else "")
+            + (f" (filtered to {n_docs} doc(s))" if n_docs else "")
             + f" selected {len(doc_ev)} passage(s)."
         )
         return evidence

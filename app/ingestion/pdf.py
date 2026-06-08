@@ -92,17 +92,30 @@ def _window(text: str, size: int = 700, overlap: int = 120) -> list[str]:
     return [c for c in out if c]
 
 
-def ingest_pdf(path: Path) -> IngestedDoc:
+def _page_texts(path: Path) -> list[tuple[str, bool]]:
+    """Return (text, needs_rtl_normalization) per page.
+
+    Prefers a clean ``<name>.txt`` sidecar (logical-order text layer, e.g. from a
+    Hebrew-aware parser) when present — those pages are already logical and must NOT
+    be re-normalized. Otherwise extracts from the PDF and flags pages for RTL repair.
+    """
+    sidecar = path.with_suffix(".txt")
+    if sidecar.exists():
+        pages = sidecar.read_text("utf-8").split("\f")
+        return [(p, False) for p in pages]
     reader = PdfReader(str(path))
+    return [((page.extract_text() or ""), True) for page in reader.pages]
+
+
+def ingest_pdf(path: Path) -> IngestedDoc:
     document = path.name
     chunks: list[Chunk] = []
     current_section = "Preamble"
     seq = 0
     doc_lang = "en"
 
-    for page_index, page in enumerate(reader.pages, start=1):
-        raw = page.extract_text() or ""
-        text = normalize_rtl(raw)
+    for page_index, (raw, needs_norm) in enumerate(_page_texts(path), start=1):
+        text = normalize_rtl(raw) if needs_norm else raw
         if _HEB.search(text):
             doc_lang = "he"
 

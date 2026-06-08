@@ -20,7 +20,10 @@ services:
     ports:
       - "8000:8000"
     environment:
+      ABA_LLM_PROVIDER: ${ABA_LLM_PROVIDER:-anthropic}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ABA_OPENAI_BASE_URL: ${ABA_OPENAI_BASE_URL:-https://api.openai.com/v1}
       ABA_OFFLINE_MODE: ${ABA_OFFLINE_MODE:-auto}
       ABA_MODEL_GENERATION: ${ABA_MODEL_GENERATION:-claude-opus-4-8}
       ABA_MODEL_ROUTER: ${ABA_MODEL_ROUTER:-claude-sonnet-4-6}

@@ -184,6 +184,7 @@ class LLMClient:
             "messages": [{"role": "system", "content": sys},
                          {"role": "user", "content": user}],
             "max_tokens": max_tokens or self.s.llm_max_tokens,
+            "temperature": 0,  # deterministic routing / SQL / grounded generation
         }
         resp = None
         if schema is not None:

@@ -63,7 +63,13 @@ def _styles():
     )
 
 
-def _build(filename: str, title: str, sections: list[tuple[str, list[str]]], rtl: bool = False) -> None:
+def _unescape(s: str) -> str:
+    return (s.replace("&quot;", '"').replace("&amp;", "&")
+             .replace("&lt;", "<").replace("&gt;", ">"))
+
+
+def _build(filename: str, title: str, sections: list[tuple[str, list[str]]],
+           rtl: bool = False, sidecar: bool = False) -> None:
     PDF_DIR.mkdir(parents=True, exist_ok=True)
     st = _styles()
     doc = SimpleDocTemplate(
@@ -80,6 +86,19 @@ def _build(filename: str, title: str, sections: list[tuple[str, list[str]]], rtl
             flow.append(Spacer(1, 4))
         flow.append(Spacer(1, 6))
     doc.build(flow)
+
+    # For RTL documents, also emit a clean logical-order text layer. PDF extractors
+    # jumble RTL numbers across lines; a production pipeline would use a Hebrew-aware
+    # parser/OCR to produce exactly this. Ingestion prefers the sidecar when present.
+    if sidecar:
+        lines = [_unescape(title), ""]
+        for heading, paras in sections:
+            lines.append(_unescape(heading))
+            lines.extend(_unescape(p) for p in paras)
+            lines.append("")
+        (PDF_DIR / filename).with_suffix(".txt").write_text(
+            "\n".join(lines), encoding="utf-8"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +213,7 @@ def main() -> None:
            contract("STK-MSA-2025", "Stark Industries", suspend_days=30, penalty_pct=15, late_fee="1.5% per month"))
 
     _build("TAVOR_Contract_HE.pdf", "‎הסכם שירותים — תבור מערכות בע\"מ",
-           hebrew_contract(), rtl=True)
+           hebrew_contract(), rtl=True, sidecar=True)
 
     _build("PRJ_ATLAS_Brief.pdf", "Project Atlas — Implementation Brief (Acme Corporation)",
            project_brief(

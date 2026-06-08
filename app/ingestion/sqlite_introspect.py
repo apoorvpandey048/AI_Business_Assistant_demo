@@ -16,6 +16,7 @@ class Column:
     name: str
     type: str
     pk: bool = False
+    values: list[str] | None = None  # distinct values for low-cardinality text columns
 
 
 @dataclass
@@ -41,6 +42,11 @@ class SchemaInfo:
             lines.append(f"TABLE {t.name} ({cols})")
             for col, ref_t, ref_c in t.foreign_keys:
                 lines.append(f"    FOREIGN KEY {t.name}.{col} -> {ref_t}.{ref_c}")
+            # Surface enum-like values so the model uses real categories (e.g. status).
+            for c in t.columns:
+                if c.values:
+                    vals = ", ".join(repr(v) for v in c.values)
+                    lines.append(f"    VALUES {t.name}.{c.name} ∈ {{{vals}}}")
         return "\n".join(lines)
 
     def table_names(self) -> list[str]:
@@ -59,12 +65,32 @@ def introspect(db_path: Path) -> SchemaInfo:
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
         ).fetchall()
     ]
+    _SKIP = ("date", "ref", "email", "file", "pdf", "doc")
+
+    def _enum_values(table: str, col: Column) -> list[str] | None:
+        t = (col.type or "").upper()
+        if col.pk or "INT" in t or "REAL" in t or col.name.endswith("_id"):
+            return None
+        if any(s in col.name.lower() for s in _SKIP):
+            return None
+        try:
+            rows = cur.execute(
+                f"SELECT DISTINCT {col.name} FROM {table} "
+                f"WHERE {col.name} IS NOT NULL LIMIT 9"
+            ).fetchall()
+        except Exception:
+            return None
+        vals = [str(r[0]) for r in rows]
+        return vals if 0 < len(vals) <= 8 else None
+
     tables: list[Table] = []
     for name in names:
         cols = [
             Column(name=r["name"], type=r["type"] or "", pk=bool(r["pk"]))
             for r in cur.execute(f"PRAGMA table_info({name})").fetchall()
         ]
+        for c in cols:
+            c.values = _enum_values(name, c)
         fks = [
             (r["from"], r["table"], r["to"])
             for r in cur.execute(f"PRAGMA foreign_key_list({name})").fetchall()
