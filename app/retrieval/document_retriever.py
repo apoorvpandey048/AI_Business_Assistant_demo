@@ -47,10 +47,21 @@ class DocumentIndex:
 
     def _allowed_ids(self, filters: dict[str, Any]) -> Optional[set[str]]:
         docs = filters.get("documents")
-        if not docs:
+        langs = filters.get("languages")
+        if not docs and not langs:
             return None
-        docs = set(docs)
-        return {cid for cid, c in self.chunks.items() if c["document"] in docs}
+        ids = set(self.chunks)
+        if docs:
+            docset = set(docs)
+            ids = {cid for cid in ids if self.chunks[cid]["document"] in docset}
+        if langs:
+            langset = set(langs)
+            lang_ids = {cid for cid in ids if self.chunks[cid].get("language") in langset}
+            # Only apply the language filter when it leaves something to retrieve,
+            # so a language with no matching chunks degrades gracefully.
+            if lang_ids:
+                ids = lang_ids
+        return ids
 
     # -- retrieve -----------------------------------------------------------
     def retrieve(

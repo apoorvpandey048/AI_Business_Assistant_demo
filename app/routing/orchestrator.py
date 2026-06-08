@@ -51,7 +51,9 @@ class Orchestrator:
             evidence += self._sql_branch(trace, calls, decision.sql_subquery or question, "sql_main")
 
         elif decision.route == "PDF":
-            evidence += self._doc_branch(trace, decision.document_subquery or question)
+            evidence += self._doc_branch(
+                trace, decision.document_subquery or question, decision.languages
+            )
 
         elif decision.route == "HYBRID":
             evidence += self._hybrid_branch(trace, calls, decision, question)
@@ -97,8 +99,9 @@ class Orchestrator:
         )
 
     # -- branches ----------------------------------------------------------
-    def _doc_branch(self, trace: Trace, query: str) -> list[Evidence]:
-        ev, dtrace = self.documents.retrieve(query)
+    def _doc_branch(self, trace: Trace, query: str, languages: list[str] | None = None) -> list[Evidence]:
+        filters = {"languages": languages} if languages else {}
+        ev, dtrace = self.documents.retrieve(query, filters=filters)
         trace.document_retrieval = dtrace
         trace.notes.append(
             f"Document retrieval ({dtrace.embedding_backend} + BM25 → RRF → "
@@ -158,8 +161,10 @@ class Orchestrator:
                             f"{len(pdfs)} contract document(s); restricting document retrieval to them."
                         )
 
-        # Step 3: document retrieval (optionally filtered)
+        # Step 3: document retrieval (optionally filtered by linked docs + query language)
         doc_q = decision.document_subquery or question
+        if decision.languages:
+            doc_filter = {**doc_filter, "languages": decision.languages}
         doc_ev, dtrace = self.documents.retrieve(doc_q, filters=doc_filter)
         trace.document_retrieval = dtrace
         evidence += doc_ev
