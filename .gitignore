@@ -22,10 +22,10 @@ ui/out/
 .DS_Store
 *.log
 
-# Internal working notes — kept local, not part of the published demo.
+# Working notes stay local — publish only the overview, architecture, and screenshots.
 context.md
-docs/implementation-plan.md
-docs/task-tracker.md
-docs/demo-script.md
-docs/loom-outline.md
-docs/client-explainer.md
+/docs/*
+!/docs/architecture.md
+!/docs/overview.md
+!/docs/AI_Business_Assistant_Overview.pdf
+!/docs/images/

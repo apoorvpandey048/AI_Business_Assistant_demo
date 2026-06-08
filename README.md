@@ -158,7 +158,7 @@ Click any citation in the UI to jump to and highlight the exact evidence.
 | Fusion / rerank | **RRF** + optional **cross-encoder** | Robust, and easy to *show* in the inspector. |
 | SQL safety | **sqlglot** AST validation, read-only, LIMIT, timeout | The model never touches the DB; SELECT-only, allow-listed tables. |
 | UI | **FastAPI + Next.js** | API-first engine; a polished, inspector-first frontend. |
-| Offline mode | deterministic fallbacks + response cache | The demo/Loom can never break on a key or network. |
+| Offline mode | deterministic fallbacks + response cache | The demo never breaks on a missing key or network. |
 
 **Cost:** ~**$0.02–0.03 per question** with Opus answers (~$0.01 with Sonnet). Embeddings
 are local → **$0**. The full 8-question demo ≈ **$0.20**. A single pay-as-you-go API key is
@@ -197,7 +197,7 @@ app/
 ui/               Next.js inspector frontend
 scripts/          seed_data.py, make_pdfs.py, eval.py
 data/             business.db + pdfs/ (committed; regenerate any time)
-docs/             implementation-plan, architecture, demo-script, loom-outline, client-explainer, task-tracker
+docs/             overview.md, architecture.md, images/ (system overview + screenshots)
 ```
 
 ---
@@ -212,5 +212,5 @@ docs/             implementation-plan, architecture, demo-script, loom-outline, 
 - **Out of scope (deliberately):** auth, billing, user management. This is a focused
   demonstration of routing, retrieval quality, grounding, and traceability.
 
-See [docs/architecture.md](docs/architecture.md) for the deep dive and
-[docs/demo-script.md](docs/demo-script.md) for the guided walkthrough.
+See [docs/overview.md](docs/overview.md) for a screenshot walkthrough and
+[docs/architecture.md](docs/architecture.md) for the architecture deep dive.
