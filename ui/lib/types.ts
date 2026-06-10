@@ -11,6 +11,8 @@ export interface Evidence {
   citation_label: string;
   score?: number | null;
   language?: string | null;
+  origin?: "sample" | "uploaded" | null;
+  used?: boolean;
   document?: string | null;
   page?: number | null;
   chunk_id?: string | null;
@@ -36,6 +38,7 @@ export interface RetrievalCandidate {
   rerank_score?: number | null;
   final_rank?: number | null;
   selected: boolean;
+  keyword_hit?: boolean;
 }
 
 export interface DocumentRetrievalTrace {
@@ -45,6 +48,10 @@ export interface DocumentRetrievalTrace {
   reranker_backend: string;
   params: Record<string, unknown>;
   candidates: RetrievalCandidate[];
+  intent?: string;
+  search_terms?: string[];
+  exact_hits?: number;
+  strategy?: string;
 }
 
 export interface SqlExecutionTrace {
@@ -148,4 +155,53 @@ export interface AppConfig {
   vector_backend: string;
   reranker_backend: string;
   has_api_key: boolean;
+}
+
+/* ---------------- ingestion & inventory ---------------- */
+export type Origin = "sample" | "uploaded";
+export type IngestStatus = "indexed" | "error";
+
+export interface TableInfo {
+  name: string;
+  original_name?: string | null;
+  rows: number;
+  columns: string[];
+}
+
+export interface IngestedDocumentInfo {
+  name: string;
+  type: "pdf";
+  origin: Origin;
+  status: IngestStatus;
+  chunks_indexed: number;
+  languages: string[];
+  pages?: number | null;
+  ingestion_ms: number;
+  error?: string | null;
+}
+
+export interface IngestedDatabaseInfo {
+  name: string;
+  type: "sqlite";
+  origin: Origin;
+  status: IngestStatus;
+  tables: TableInfo[];
+  total_rows: number;
+  ingestion_ms: number;
+  error?: string | null;
+}
+
+export interface Inventory {
+  documents: IngestedDocumentInfo[];
+  databases: IngestedDatabaseInfo[];
+  total_chunks: number;
+  total_tables: number;
+}
+
+export interface IngestResult {
+  ok: boolean;
+  documents: IngestedDocumentInfo[];
+  databases: IngestedDatabaseInfo[];
+  inventory: Inventory;
+  message: string;
 }

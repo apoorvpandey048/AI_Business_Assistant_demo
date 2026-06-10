@@ -8,10 +8,10 @@ RUN npm install --no-audit --no-fund
 
 COPY . .
 
-# Baked at build time (NEXT_PUBLIC_* are inlined). For docker-compose the browser
-# runs on the host, so it reaches the API at localhost:8000.
-ARG NEXT_PUBLIC_API_BASE=http://localhost:8000
-ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
+# The browser calls the UI's own origin at /api/*; the Next server proxies those to the
+# backend at API_PROXY_TARGET. In docker-compose that is the API service hostname.
+ARG API_PROXY_TARGET=http://localhost:8000
+ENV API_PROXY_TARGET=$API_PROXY_TARGET
 RUN npm run build
 
 EXPOSE 3000

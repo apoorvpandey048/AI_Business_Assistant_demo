@@ -24,6 +24,8 @@ class Evidence(BaseModel):
     citation_label: str                       # "[ACME_MSA_2025.pdf p.4]" / "[invoices #1187]"
     score: Optional[float] = None             # retrieval / rerank score (documents)
     language: Optional[str] = None            # "en" | "he"
+    origin: Optional[str] = None              # "sample" | "uploaded" — provenance for trust
+    used: bool = False                        # did the final answer actually cite this?
 
     # document provenance
     document: Optional[str] = None
@@ -58,6 +60,7 @@ class RetrievalCandidate(BaseModel):
     rerank_score: Optional[float] = None
     final_rank: Optional[int] = None
     selected: bool = False
+    keyword_hit: bool = False                 # chunk literally contains a searched term
 
 
 class DocumentRetrievalTrace(BaseModel):
@@ -68,6 +71,11 @@ class DocumentRetrievalTrace(BaseModel):
     reranker_backend: str = "none"
     params: dict[str, Any] = Field(default_factory=dict)
     candidates: list[RetrievalCandidate] = Field(default_factory=list)
+    # intent-aware retrieval (set by DocumentIndex.retrieve)
+    intent: str = "semantic"                  # "keyword" | "semantic"
+    search_terms: list[str] = Field(default_factory=list)
+    exact_hits: int = 0                       # chunks literally containing a term
+    strategy: str = ""                        # plain-English summary for the inspector
 
 
 class SqlExecutionTrace(BaseModel):
@@ -147,6 +155,9 @@ class Trace(BaseModel):
 class AskRequest(BaseModel):
     question: str
     developer_mode: bool = True
+    # "workspace" → answer only from the user's uploaded sources (a clean, isolated
+    # workspace). "demo" → answer only from the preloaded sample data. "all" → both.
+    scope: Literal["workspace", "demo", "all"] = "workspace"
 
 
 class AskResponse(BaseModel):
@@ -173,3 +184,60 @@ class SourceInfo(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     status: Literal["active", "future"] = "active"
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+# --- Ingestion & inventory (runtime uploads) --------------------------------
+
+class TableInfo(BaseModel):
+    """One table detected in an uploaded (or sample) SQLite database."""
+
+    name: str                                  # effective name (post collision-safe rename)
+    original_name: Optional[str] = None        # name in the uploaded file, if renamed
+    rows: int = 0
+    columns: list[str] = Field(default_factory=list)
+
+
+class IngestedDocumentInfo(BaseModel):
+    """A PDF that has been ingested and indexed at runtime (or pre-loaded sample)."""
+
+    name: str
+    type: Literal["pdf"] = "pdf"
+    origin: Literal["sample", "uploaded"] = "uploaded"
+    status: Literal["indexed", "error"] = "indexed"
+    chunks_indexed: int = 0
+    languages: list[str] = Field(default_factory=list)
+    pages: Optional[int] = None
+    ingestion_ms: float = 0.0
+    error: Optional[str] = None
+
+
+class IngestedDatabaseInfo(BaseModel):
+    """A SQLite database registered with the router (sample or uploaded)."""
+
+    name: str
+    type: Literal["sqlite"] = "sqlite"
+    origin: Literal["sample", "uploaded"] = "uploaded"
+    status: Literal["indexed", "error"] = "indexed"
+    tables: list[TableInfo] = Field(default_factory=list)
+    total_rows: int = 0
+    ingestion_ms: float = 0.0
+    error: Optional[str] = None
+
+
+class Inventory(BaseModel):
+    """Everything currently indexed — drives the Workspace source inventory."""
+
+    documents: list[IngestedDocumentInfo] = Field(default_factory=list)
+    databases: list[IngestedDatabaseInfo] = Field(default_factory=list)
+    total_chunks: int = 0
+    total_tables: int = 0
+
+
+class IngestResult(BaseModel):
+    """Response for an upload: what was ingested this request + the full inventory."""
+
+    ok: bool = True
+    documents: list[IngestedDocumentInfo] = Field(default_factory=list)
+    databases: list[IngestedDatabaseInfo] = Field(default_factory=list)
+    inventory: Inventory
+    message: str = ""

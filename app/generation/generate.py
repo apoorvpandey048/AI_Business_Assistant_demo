@@ -34,6 +34,10 @@ _SYSTEM = (
     "constraints (e.g. a date range or status filter) — treat them as authoritative and do "
     "NOT re-derive or second-guess them (e.g. if rows were returned for 'expiring in 90 days', "
     "those ARE the expiring contracts).\n"
+    "If the question asks WHICH or WHAT document contains, mentions, or references a term, "
+    "answer in a complete sentence that names the document and the page(s) where it appears — "
+    "e.g. 'The keyword \"X\" appears in Acme_MSA_2025.pdf (page 4) [e1].' NEVER answer with a "
+    "bare filename alone.\n"
     "If the evidence genuinely does not contain enough to answer, set insufficient=true and "
     "briefly say what is missing — do NOT fabricate.\n"
     "Write the answer in the language of the QUESTION (Hebrew only if the question itself is "
@@ -57,13 +61,51 @@ def _evidence_block(evidence: list[Evidence]) -> str:
     return "\n\n".join(lines)
 
 
-def _extractive_fallback(question: str, evidence: list[Evidence]) -> dict[str, Any]:
+def _humanize_doc(name: str) -> str:
+    """A cleaner display name for a document — strips an upload timestamp/hash suffix
+    and the extension, without inventing a title."""
+    base = re.sub(r"\.(pdf|txt)$", "", name, flags=re.I)
+    # drop a trailing "-2026-06-02-07-29-09-289628" style upload stamp
+    base = re.sub(r"[-_](?:\d{2,4})(?:[-_]\d{1,6}){2,}$", "", base)
+    base = base.replace("_", " ").replace("-", " ").strip()
+    return base or name
+
+
+def _keyword_answer(terms: list[str], evidence: list[Evidence]) -> dict[str, Any]:
+    """Deterministic, professional answer for a 'which document contains X' lookup."""
+    docs: dict[str, list[Evidence]] = {}
+    for e in evidence:
+        docs.setdefault(e.document or e.source_name, []).append(e)
+    term_str = ", ".join(f'"{t}"' for t in terms) if terms else "the term"
+    lead = "keyword" if len(terms) <= 1 else "keywords"
+    parts = []
+    for doc, evs in docs.items():
+        pages = sorted({e.page for e in evs if e.page is not None})
+        cites = "".join(f"[{e.id}]" for e in evs)
+        page_str = (
+            f" (page {pages[0]})" if len(pages) == 1
+            else f" (pages {', '.join(map(str, pages))})" if pages else ""
+        )
+        parts.append(f"{_humanize_doc(doc)} — {doc}{page_str} {cites}".strip())
+    if len(parts) == 1:
+        answer = f"The {lead} {term_str} appears in {parts[0]}."
+    else:
+        answer = (f"The {lead} {term_str} appears in {len(parts)} documents: "
+                  + "; ".join(parts) + ".")
+    return {"answer": answer, "citations": [e.id for e in evidence], "insufficient": False}
+
+
+def _extractive_fallback(
+    question: str, evidence: list[Evidence], keyword_terms: list[str] | None = None
+) -> dict[str, Any]:
     if not evidence:
         return {
             "answer": "Insufficient evidence: no relevant records or document passages were "
                       "retrieved from the available sources to answer this question.",
             "citations": [], "insufficient": True,
         }
+    if keyword_terms and all(e.source_kind == "documents" for e in evidence):
+        return _keyword_answer(keyword_terms, evidence)
     rel = [e for e in evidence if e.source_kind == "relational"]
     doc = [e for e in evidence if e.source_kind == "documents"]
     parts: list[str] = []
@@ -79,17 +121,28 @@ def _extractive_fallback(question: str, evidence: list[Evidence]) -> dict[str, A
     return {"answer": answer, "citations": [e.id for e in evidence], "insufficient": False}
 
 
-def generate_answer(question: str, evidence: list[Evidence]):
+def generate_answer(question: str, evidence: list[Evidence],
+                    keyword_terms: list[str] | None = None):
     s = get_settings()
     llm = get_llm()
     if not evidence:
         data = _extractive_fallback(question, evidence)
         return data["answer"], data["citations"], True, None
 
+    # Keyword document lookups ("which document contains X") are a deterministic
+    # identification task — answer them directly from the matched evidence. This
+    # guarantees a professional, fully-grounded sentence with the exact document and
+    # page(s), with zero LLM variance and no possibility of a bare-filename or
+    # hallucinated response.
+    if keyword_terms and all(e.source_kind == "documents" for e in evidence):
+        data = _keyword_answer(keyword_terms, evidence)
+        return data["answer"], data["citations"], data["insufficient"], None
+
     user = f"Question: {question}\n\nEvidence:\n{_evidence_block(evidence)}"
     data, call = llm.structured(
         purpose="generation", model=s.model_generation, system=_SYSTEM, user=user,
-        schema=_ANSWER_SCHEMA, fallback=lambda: _extractive_fallback(question, evidence),
+        schema=_ANSWER_SCHEMA,
+        fallback=lambda: _extractive_fallback(question, evidence, keyword_terms),
         max_tokens=1500,
     )
     answer = (data.get("answer", "") or "").replace("\\n", "\n").strip()

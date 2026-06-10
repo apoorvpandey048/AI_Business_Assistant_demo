@@ -12,6 +12,7 @@ from app.llm.embeddings import EmbeddingModel
 from app.models import DocumentRetrievalTrace, Evidence, RetrievalCandidate
 from app.retrieval.bm25 import BM25Index
 from app.retrieval.fusion import reciprocal_rank_fusion
+from app.retrieval.intent import QueryIntent, detect_intent, text_hits
 from app.retrieval.rerank import Reranker
 from app.retrieval.vector_store import VectorStore, make_vector_store
 
@@ -40,6 +41,26 @@ class DocumentIndex:
         vectors = self._embed_cached(texts)
         self.store.add(ids, vectors)
         self.bm25.build(ids, texts)
+
+    def add_chunks(self, new_chunks: list[dict[str, Any]]) -> int:
+        """Index additional chunks at runtime (uploaded PDFs) without re-embedding the
+        existing corpus. Embeds only the new chunks, appends them to the dense store,
+        and rebuilds the (cheap) BM25 index over the full corpus. Returns how many were
+        newly added (duplicates by chunk_id are skipped)."""
+        fresh = [c for c in new_chunks if c["chunk_id"] not in self.chunks]
+        if not fresh:
+            return 0
+        ids = [c["chunk_id"] for c in fresh]
+        texts = [c["text"] for c in fresh]
+        vectors = self.embedder.embed(texts)
+        for c in fresh:
+            self.chunks[c["chunk_id"]] = c
+        self.store.extend(ids, vectors)
+        # BM25 has no incremental API and is cheap to rebuild over the full corpus.
+        all_ids = list(self.chunks)
+        all_texts = [self.chunks[i]["text"] for i in all_ids]
+        self.bm25.build(all_ids, all_texts)
+        return len(fresh)
 
     def _embed_cached(self, texts: list[str]) -> np.ndarray:
         """Cache document embeddings on disk so (re)starts don't re-call the API.
@@ -93,60 +114,89 @@ class DocumentIndex:
 
     # -- retrieve -----------------------------------------------------------
     def retrieve(
-        self, query: str, filters: Optional[dict[str, Any]] = None, final_k: Optional[int] = None
+        self, query: str, filters: Optional[dict[str, Any]] = None,
+        final_k: Optional[int] = None, intent: Optional[QueryIntent] = None,
     ) -> tuple[list[Evidence], DocumentRetrievalTrace]:
         filters = filters or {}
         final_k = final_k or self.s.final_k
         allowed = self._allowed_ids(filters)
+        intent = intent or detect_intent(query)
+        # Search on the intent's terms, not the instruction sentence — so "find the
+        # document containing X" searches for X, not for "find/document/containing".
+        search_q = intent.search_query or query
 
-        # 1) dense
-        qvec = self.embedder.embed_one(query)
+        # 1) dense + 2) bm25 over the intent-aware search query
+        qvec = self.embedder.embed_one(search_q)
         dense = self.store.search(qvec, self.s.dense_top_k, allowed_ids=allowed)
         dense_rank = {cid: i + 1 for i, (cid, _) in enumerate(dense)}
         dense_score = {cid: sc for cid, sc in dense}
 
-        # 2) bm25 (filter to allowed after search)
-        bm25 = self.bm25.search(query, self.s.bm25_top_k)
+        bm25 = self.bm25.search(search_q, self.s.bm25_top_k)
         if allowed is not None:
             bm25 = [(cid, sc) for cid, sc in bm25 if cid in allowed]
         bm25_rank = {cid: i + 1 for i, (cid, _) in enumerate(bm25)}
         bm25_score = {cid: sc for cid, sc in bm25}
 
-        # 3) RRF fusion
+        # 3) RRF fusion (always computed — drives the semantic path and the inspector)
         fused = reciprocal_rank_fusion(
             [[c for c, _ in dense], [c for c, _ in bm25]], k=self.s.rrf_k
         )
-        if not fused:
-            trace = DocumentRetrievalTrace(
-                query=query, filters=filters,
-                embedding_backend=self.embedder.backend,
-                reranker_backend=self.reranker.backend if self.reranker else "disabled",
-                params=self._params(), candidates=[],
-            )
-            return [], trace
-
         fused_order = sorted(fused, key=lambda c: fused[c], reverse=True)
 
-        # 4) rerank top-N
+        # Exact keyword hits: chunks that literally contain a distinctive search term.
+        hit_ids: set[str] = set()
+        if intent.gate_terms:
+            hit_ids = {cid for cid, c in self.chunks.items()
+                       if text_hits(c["text"], intent.gate_terms)}
+            if allowed is not None:
+                hit_ids &= allowed
+
         rerank_scores: dict[str, float] = {}
-        topn = fused_order[: self.s.rerank_top_n]
-        if self.reranker is not None:
-            scored = self.reranker.rerank(
-                query, [(cid, self.chunks[cid]["text"]) for cid in topn]
-            )
-            if scored:
-                rerank_scores = scored
 
-        def final_key(cid: str) -> float:
-            return rerank_scores.get(cid, fused[cid])
+        if intent.mode == "keyword":
+            # KEYWORD path: only chunks that actually contain the term are evidence,
+            # ranked BM25-first (exact lexical match) then dense. This is what stops a
+            # semantically-similar-but-irrelevant chunk from ever being surfaced.
+            if not hit_ids:
+                # Explicit lookup, term found nowhere → return NOTHING rather than guess
+                # with semantically-similar text. Honesty beats a confident wrong answer.
+                strategy = (f"{intent.reason} No document contains the term — "
+                            "returning no evidence (declining to guess).")
+                return [], self._empty_trace(query, filters, intent, "keyword", strategy)
+            def kkey(cid: str):
+                return (bm25_score.get(cid, 0.0), dense_score.get(cid, 0.0),
+                        fused.get(cid, 0.0))
+            order = sorted(hit_ids, key=kkey, reverse=True)
+            selected = order[:final_k]
+            used_mode = "keyword"
+            strategy = f"{intent.reason} {len(hit_ids)} exact match(es); other passages excluded."
+        else:
+            # SEMANTIC path: hybrid + optional rerank, then trim the weak tail.
+            used_mode = "semantic"
+            strategy = intent.reason
+            if not fused:
+                return [], self._empty_trace(query, filters, intent, used_mode, strategy)
 
-        final_order = sorted(fused_order, key=final_key, reverse=True)
-        final_rank = {cid: i + 1 for i, cid in enumerate(final_order)}
-        selected = final_order[:final_k]
+            topn = fused_order[: self.s.rerank_top_n]
+            if self.reranker is not None:
+                scored = self.reranker.rerank(
+                    search_q, [(cid, self.chunks[cid]["text"]) for cid in topn]
+                )
+                if scored:
+                    rerank_scores = scored
+            order = sorted(fused_order, key=lambda c: rerank_scores.get(c, fused[c]),
+                           reverse=True)
+            selected = self._semantic_select(order, fused, final_k)
 
-        # 5) build candidates (inspector) + evidence (selected)
+        def score_of(cid: str) -> Optional[float]:
+            return rerank_scores.get(cid, fused.get(cid, 0.0))
+
+        final_rank = {cid: i + 1 for i, cid in enumerate(order)}
+        sel_set = set(selected)
+
+        # 4) candidates (inspector) — the considered set with full scoring + hit flag
         candidates: list[RetrievalCandidate] = []
-        for cid in final_order[: max(self.s.rerank_top_n, final_k)]:
+        for cid in order[: max(self.s.rerank_top_n, final_k)]:
             c = self.chunks[cid]
             candidates.append(RetrievalCandidate(
                 chunk_id=cid, document=c["document"], page=c.get("page"),
@@ -156,16 +206,18 @@ class DocumentIndex:
                 bm25_rank=bm25_rank.get(cid), bm25_score=_round(bm25_score.get(cid)),
                 rrf_score=_round(fused.get(cid), 5),
                 rerank_score=_round(rerank_scores.get(cid)),
-                final_rank=final_rank.get(cid), selected=cid in selected,
+                final_rank=final_rank.get(cid), selected=cid in sel_set,
+                keyword_hit=cid in hit_ids,
             ))
 
+        # 5) evidence (selected only)
         evidence: list[Evidence] = []
         for cid in selected:
             c = self.chunks[cid]
             label = f"[{c['document']} p.{c.get('page')}]"
             evidence.append(Evidence(
                 id=f"doc::{cid}", source_name="contracts_pdf", source_kind="documents",
-                content=c["text"], citation_label=label, score=_round(final_key(cid)),
+                content=c["text"], citation_label=label, score=_round(score_of(cid)),
                 language=c.get("language"), document=c["document"], page=c.get("page"),
                 chunk_id=cid, section=c.get("section"),
             ))
@@ -175,8 +227,37 @@ class DocumentIndex:
             embedding_backend=self.embedder.backend,
             reranker_backend=self.reranker.backend if self.reranker else "disabled",
             params=self._params(), candidates=candidates,
+            intent=used_mode, search_terms=intent.terms or intent.gate_terms,
+            exact_hits=len(hit_ids), strategy=strategy,
         )
         return evidence, trace
+
+    def _semantic_select(
+        self, order: list[str], fused: dict[str, float], final_k: int
+    ) -> list[str]:
+        """Keep passages within `keep_ratio` of the top fusion score (trim the clearly
+        weaker tail), but never fewer than `min_keep`, never more than `final_k`."""
+        if not order:
+            return []
+        top = max(fused.get(order[0], 0.0), 1e-9)
+        floor = max(top * self.s.semantic_keep_ratio, self.s.min_evidence_score)
+        kept: list[str] = []
+        for i, cid in enumerate(order):
+            if len(kept) >= final_k:
+                break
+            if i < self.s.semantic_min_keep or fused.get(cid, 0.0) >= floor:
+                kept.append(cid)
+        return kept
+
+    def _empty_trace(self, query, filters, intent, used_mode, strategy):
+        return DocumentRetrievalTrace(
+            query=query, filters=filters,
+            embedding_backend=self.embedder.backend,
+            reranker_backend=self.reranker.backend if self.reranker else "disabled",
+            params=self._params(), candidates=[],
+            intent=used_mode, search_terms=intent.terms or intent.gate_terms,
+            exact_hits=0, strategy=strategy,
+        )
 
     def _params(self) -> dict[str, Any]:
         return {

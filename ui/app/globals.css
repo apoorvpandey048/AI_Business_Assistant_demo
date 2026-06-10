@@ -3,58 +3,76 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --border: #e6e8ec;
+  --border-strong: #d3d7df;
+  --accent: #4f46e5;
 }
 
 html,
 body {
-  @apply text-slate-200 antialiased;
-  background-color: #05070f;
+  @apply text-slate-700 antialiased;
+  background-color: var(--bg);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
-body {
-  background-image:
-    radial-gradient(48rem 36rem at 82% -8%, rgba(99, 102, 241, 0.16), transparent 70%),
-    radial-gradient(42rem 34rem at 4% 4%, rgba(16, 185, 129, 0.10), transparent 70%),
-    radial-gradient(60rem 50rem at 50% 120%, rgba(56, 132, 245, 0.08), transparent 70%);
-  background-attachment: fixed;
-}
-
-/* glass surface */
+/* Card / surface */
 .surface {
-  @apply rounded-2xl border border-white/[0.07] bg-white/[0.03] backdrop-blur-xl;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.05),
-    0 18px 40px -22px rgba(0, 0, 0, 0.8);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
 }
 
-.gradient-text {
-  background: linear-gradient(95deg, #fff 0%, #c7d2fe 45%, #a5f3e8 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+.surface-muted {
+  background: #fafbfc;
+  border: 1px solid var(--border);
+  border-radius: 12px;
 }
 
+/* Subtle focus ring used on inputs/buttons */
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.16);
+  border-color: var(--accent);
+}
+
+/* Scrollbars */
 .scroll-thin::-webkit-scrollbar {
-  height: 8px;
-  width: 8px;
+  height: 9px;
+  width: 9px;
 }
 .scroll-thin::-webkit-scrollbar-thumb {
-  @apply rounded-full bg-slate-700/70;
+  @apply rounded-full bg-slate-300;
+}
+.scroll-thin::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400;
 }
 .scroll-thin::-webkit-scrollbar-track {
   background: transparent;
 }
 
+/* Code surface (SQL / mono blocks) on light backgrounds */
+.code-surface {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 10px;
+}
+
+/* Citation pulse when a cited evidence item is focused */
 .cite-pulse {
   animation: cite 1.6s ease-out;
 }
 @keyframes cite {
   0% {
-    box-shadow: 0 0 0 0 rgba(129, 140, 248, 0.55);
+    box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.4);
   }
   100% {
-    box-shadow: 0 0 0 16px rgba(129, 140, 248, 0);
+    box-shadow: 0 0 0 14px rgba(79, 70, 229, 0);
   }
 }
 
@@ -69,23 +87,41 @@ body {
   }
 }
 .fade-up {
-  animation: fade-up 0.4s ease-out both;
+  animation: fade-up 0.32s ease-out both;
 }
 
-@keyframes shimmer {
-  100% {
-    transform: translateX(100%);
-  }
-}
-.shimmer {
+/* Indeterminate progress bar for ingestion */
+.progress-track {
   position: relative;
   overflow: hidden;
+  background: #eceef2;
+  border-radius: 9999px;
 }
-.shimmer::after {
+.progress-indeterminate::after {
   content: "";
   position: absolute;
   inset: 0;
-  transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
-  animation: shimmer 1.6s infinite;
+  width: 40%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: indeterminate 1.1s ease-in-out infinite;
+}
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+/* Drop target highlight */
+.dropzone {
+  border: 1.5px dashed var(--border-strong);
+  border-radius: 12px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.dropzone.is-over {
+  border-color: var(--accent);
+  background: rgba(79, 70, 229, 0.04);
 }

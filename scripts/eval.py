@@ -40,6 +40,20 @@ def main() -> int:
         print(f"{ex.route:>7} {route:>7}  {flag:>2}  {ev:>3}  {str(cited):>5}  {ex.question[:64]}")
 
     total = len(eng.examples)
+
+    # Keyword-precision regression: a "which document mentions <exact id>" lookup must
+    # return ONLY passages from the document that literally contains the id — never
+    # semantically-similar-but-irrelevant chunks from other documents.
+    probe = "Which document mentions INI-MSA-2024?"
+    resp = eng.ask(probe)
+    docs = {e.document for e in resp.trace.evidence}
+    intent = resp.trace.document_retrieval.intent if resp.trace.document_retrieval else "?"
+    precise = bool(resp.trace.evidence) and docs == {"INITECH_Agreement.pdf"}
+    passed += precise
+    total += 1
+    print(f"{'PDF':>7} {resp.trace.route.route:>7}  {'✓' if precise else '✗':>2}  "
+          f"{len(resp.trace.evidence):>3}  {intent:>5}  {probe[:64]}")
+
     print("-" * 100)
     print(f"{passed}/{total} passed\n")
     return 0 if passed == total else 1

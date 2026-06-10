@@ -40,7 +40,14 @@ output** (`output_config.format`). It returns:
 - `document_subquery` / `sql_subquery` — focused asks per source
 - `languages`, `confidence`, `reasoning`
 
-`NONE` is a first-class outcome: out-of-scope questions are declined, not hallucinated.
+The router is **source-centric**: it asks *"which uploaded source could contain the
+answer?"*, not *"does this sound like a business question?"*. So `PDF` means anything
+stated anywhere in an uploaded document — authors, recipients, parties, emails, amounts,
+metadata, narrative — not just contract clauses. `NONE` is a first-class outcome meaning
+**insufficient evidence** — no uploaded source could answer it — declined, not
+hallucinated. A deterministic **document safety net** in the orchestrator runs a direct
+search before any `NONE` is final, so a router mistake can never silently suppress an
+answerable question.
 
 ### 2.2 Retrieval
 

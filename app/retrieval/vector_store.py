@@ -19,6 +19,8 @@ class VectorStore(Protocol):
 
     def add(self, ids: list[str], vectors: np.ndarray) -> None: ...
 
+    def extend(self, ids: list[str], vectors: np.ndarray) -> None: ...
+
     def search(
         self, query: np.ndarray, k: int, allowed_ids: Optional[set[str]] = None
     ) -> list[tuple[str, float]]: ...
@@ -36,6 +38,20 @@ class NumpyVectorStore:
         self._ids = list(ids)
         self._index = {i: n for n, i in enumerate(ids)}
         self._matrix = np.asarray(vectors, dtype=np.float32)
+
+    def extend(self, ids: list[str], vectors: np.ndarray) -> None:
+        """Append new vectors at runtime (uploaded documents) without re-embedding."""
+        new = np.asarray(vectors, dtype=np.float32)
+        if new.size == 0 or len(ids) == 0:
+            return
+        if self._matrix is None or self._matrix.size == 0:
+            self.add(list(ids), new)
+            return
+        base = len(self._ids)
+        self._ids.extend(ids)
+        for n, i in enumerate(ids):
+            self._index[i] = base + n
+        self._matrix = np.vstack([self._matrix, new])
 
     def search(
         self, query: np.ndarray, k: int, allowed_ids: Optional[set[str]] = None
@@ -82,6 +98,20 @@ class QdrantVectorStore:
         self._ids = list(ids)
         points = [
             qm.PointStruct(id=n, vector=vectors[n].tolist(), payload={"chunk_id": ids[n]})
+            for n in range(len(ids))
+        ]
+        self.client.upsert(collection_name=self.collection, points=points)
+
+    def extend(self, ids: list[str], vectors: np.ndarray) -> None:
+        """Append new points to the existing collection (uploaded documents)."""
+        if len(ids) == 0:
+            return
+        qm = self._qm
+        base = len(self._ids)
+        self._ids.extend(ids)
+        points = [
+            qm.PointStruct(id=base + n, vector=vectors[n].tolist(),
+                           payload={"chunk_id": ids[n]})
             for n in range(len(ids))
         ]
         self.client.upsert(collection_name=self.collection, points=points)

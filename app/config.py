@@ -66,7 +66,12 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     final_k: int = 5
     rerank_top_n: int = 20
-    min_evidence_score: float = 0.02
+    # Semantic relevance gate: keep passages within `keep_ratio` of the top fusion score
+    # (drops the clearly-weaker tail) but never return fewer than `min_keep` for a real
+    # question. `min_evidence_score` is an absolute fusion-score floor for junk removal.
+    min_evidence_score: float = 0.015
+    semantic_keep_ratio: float = 0.35
+    semantic_min_keep: int = 3
 
     # --- SQL safety --------------------------------------------------------
     sql_row_limit: int = 200

@@ -1,13 +1,12 @@
-import type { AppConfig, AskResponse, ExampleQuestion, SourceInfo } from "./types";
+import type {
+  AppConfig, AskResponse, ExampleQuestion, IngestResult, Inventory, SourceInfo,
+} from "./types";
 
-// Derive the API base from the host the browser is actually using, so the app works
-// whether opened via localhost, the WSL IP, or any machine IP (the API is on :8000).
-// Falls back to the build-time env (or localhost) during SSR.
+// All API calls go through the UI's own origin at /api/*, which the Next server proxies
+// to the backend (see next.config.js rewrites). One origin → works on localhost, a LAN
+// IP, or behind a single public URL (Cloudflare tunnel) with no CORS and no extra port.
 function apiBase(): string {
-  if (typeof window !== "undefined" && window.location?.hostname) {
-    return `${window.location.protocol}//${window.location.hostname}:8000`;
-  }
-  return process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "http://localhost:8000";
+  return "/api";
 }
 
 async function getJSON<T>(path: string): Promise<T> {
@@ -28,12 +27,49 @@ export async function fetchSources(): Promise<SourceInfo[]> {
   return getJSON<SourceInfo[]>("/sources");
 }
 
-export async function ask(question: string): Promise<AskResponse> {
+export async function fetchInventory(): Promise<Inventory> {
+  return getJSON<Inventory>("/inventory");
+}
+
+export type AskScope = "workspace" | "demo" | "all";
+
+export async function ask(question: string, scope: AskScope = "workspace"): Promise<AskResponse> {
   const res = await fetch(`${apiBase()}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, scope }),
   });
   if (!res.ok) throw new Error(`ask → ${res.status}`);
+  return res.json();
+}
+
+async function postFiles(path: string, files: File[]): Promise<IngestResult> {
+  const form = new FormData();
+  for (const f of files) form.append("files", f, f.name);
+  const res = await fetch(`${apiBase()}${path}`, { method: "POST", body: form });
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      const j = await res.json();
+      if (j?.detail) detail = j.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+export async function ingestPdf(files: File[]): Promise<IngestResult> {
+  return postFiles("/ingest/pdf", files);
+}
+
+export async function ingestSqlite(files: File[]): Promise<IngestResult> {
+  return postFiles("/ingest/sqlite", files);
+}
+
+export async function resetWorkspace(): Promise<Inventory> {
+  const res = await fetch(`${apiBase()}/reset`, { method: "POST" });
+  if (!res.ok) throw new Error(`reset → ${res.status}`);
   return res.json();
 }

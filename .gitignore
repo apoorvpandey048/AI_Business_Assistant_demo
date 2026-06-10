@@ -13,10 +13,19 @@ __pycache__/
 # regenerate any time with scripts/seed_data.py + scripts/make_pdfs.py.
 data/cache/
 
+# Runtime customer uploads (PDFs / SQLite) + the merged working DB — session-scoped, never committed.
+data/uploads/
+
 # Node / Next
 ui/node_modules/
 ui/.next/
 ui/out/
+ui/tsconfig.tsbuildinfo
+
+# Personal / client documents kept out of the public repo (privacy). The sample
+# contract PDFs under data/pdfs/ ARE committed; these real uploads are not.
+/Apoorv-Pandey-*.pdf
+/IMM_Prototype_Scope_and_Valuation.pdf
 
 # OS / editor
 .DS_Store

@@ -45,17 +45,27 @@ class RelationalSource:
 
     # -- description --------------------------------------------------------
     def describe(self) -> SourceInfo:
+        # Data-driven description so the router sees the ACTUAL tables currently
+        # registered (sample + any uploaded databases), not a hardcoded list.
+        tables = self.schema.tables
+        table_lines = []
+        for t in tables:
+            cols = ", ".join(c.name for c in t.columns[:8])
+            more = "" if len(t.columns) <= 8 else ", …"
+            table_lines.append(f"{t.name}({cols}{more})")
+        table_summary = "; ".join(table_lines) if table_lines else "no tables yet"
+        description = (
+            f"Structured records in a SQLite database with {len(tables)} table(s): "
+            f"{table_summary}."
+        )
         return SourceInfo(
             name=self.name, kind="relational",
-            title="Business database (SQLite)",
-            description=(
-                "Structured records: customers, contracts (with dates & values), invoices "
-                "(with due dates & status), projects (with status), and payments."
-            ),
+            title="Structured database (SQLite)",
+            description=description,
             capabilities=[
-                "who/how-many/sum/filter-by-date questions",
-                "overdue or pending invoices; outstanding balances",
-                "contracts by end date / value; active vs completed projects",
+                "counts, sums, averages, min/max, group-by and filters over the tables listed",
+                "date-range, status and category filters; ranking and aggregation",
+                f"available tables: {', '.join(t.name for t in tables) or 'none'}",
             ],
             status="active",
             details={
@@ -64,17 +74,27 @@ class RelationalSource:
             },
         )
 
+    def _scoped_schema_text(self, scoped: Optional[set[str]]) -> str:
+        """Schema text limited to the tables in scope, so generated SQL only ever
+        references tables the current scope is allowed to read."""
+        if scoped is None:
+            return self.schema.schema_text()
+        sub = SchemaInfo(tables=[t for t in self.schema.tables if t.name in scoped])
+        return sub.schema_text()
+
     # -- query --------------------------------------------------------------
     def run(
-        self, nl_query: str, purpose: str = "sql", entity_hint: Optional[str] = None
+        self, nl_query: str, purpose: str = "sql", entity_hint: Optional[str] = None,
+        allowed_tables: Optional[list[str]] = None,
     ) -> tuple[list[Evidence], SqlExecutionTrace, Any]:
+        scoped = set(allowed_tables) if allowed_tables is not None else None
         sql, rationale, call = generate_sql(
-            nl_query, self.schema.schema_text(), entity_hint=entity_hint
+            nl_query, self._scoped_schema_text(scoped), entity_hint=entity_hint
         )
         trace = SqlExecutionTrace(
             purpose=purpose, natural_language=nl_query, generated_sql=sql,
         )
-        allowed = set(self.schema.table_names())
+        allowed = scoped if scoped is not None else set(self.schema.table_names())
         try:
             validated = validate_select(sql, allowed, row_limit=self.s.sql_row_limit)
             trace.validated_sql = validated
