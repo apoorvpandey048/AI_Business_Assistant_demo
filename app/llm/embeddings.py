@@ -64,11 +64,14 @@ class _HashingEmbedder:
 
 
 class _SentenceTransformerEmbedder:
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, device: str = "") -> None:
         from sentence_transformers import SentenceTransformer
 
-        self.model = SentenceTransformer(model_name)
-        self.backend = f"local:{model_name}"
+        # device="" → let sentence-transformers auto-select; force "cpu" on a small
+        # GPU so the embedder does not contend for VRAM with a local chat model.
+        self.model = SentenceTransformer(model_name, device=device or None)
+        suffix = f"@{device}" if device else ""
+        self.backend = f"local:{model_name}{suffix}"
 
     def encode(self, texts: list[str]) -> np.ndarray:
         return np.asarray(
@@ -100,9 +103,13 @@ class EmbeddingModel:
     def __init__(self) -> None:
         s = get_settings()
         pref = (s.embedding_backend or "auto").lower()
+        # Embeddings are DECOUPLED from the chat provider (sprint §13 / embedding-strategy.md):
+        # OpenAI embeddings are auto-selected only for a hosted OpenAI endpoint with a key.
+        # Selecting the Ollama chat provider does NOT switch embeddings to a hosted API —
+        # the local path keeps the local→hashing ladder so a fully-offline install needs no key.
         want_openai = pref == "openai" or (
             pref == "auto"
-            and s.llm_provider == "openai"
+            and s.resolved_provider == "openai"
             and "openai.com" in (s.openai_base_url or "")
             and bool(s.openai_key)
         )
@@ -114,7 +121,9 @@ class EmbeddingModel:
         if want_openai and openai is not None:
             candidates.append(lambda: _OpenAIEmbedder(s))
         if pref in ("auto", "local"):
-            candidates.append(lambda: _SentenceTransformerEmbedder(s.embedding_model))
+            candidates.append(
+                lambda: _SentenceTransformerEmbedder(s.embedding_model, s.embedding_device)
+            )
         candidates.append(lambda: _HashingEmbedder())
 
         impl = None

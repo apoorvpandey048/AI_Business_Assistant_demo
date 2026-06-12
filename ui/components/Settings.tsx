@@ -3,6 +3,8 @@ import React from "react";
 import type { AppConfig, SourceInfo } from "@/lib/types";
 import { roleLabel } from "@/lib/role";
 import { Button, Card, Icons, Pill, SectionTitle, cn, isRTL } from "./ui";
+import ProviderSettings from "./ProviderSettings";
+import type { ToastItem } from "./ui";
 
 /* Persona editing is draft-based: nothing is applied until Save. The card always
    shows exactly one of three states so the user never has to guess:
@@ -13,7 +15,7 @@ type RoleState = "active" | "inactive" | "unsaved";
 
 export default function Settings({
   role, onSaveRole, onClearRole, config, sources, onReset, resetting, hasUploads,
-  onOpenSources,
+  onOpenSources, pushToast, onRefreshConfig,
 }: {
   role: string;                       // the SAVED role — the one applied to questions
   onSaveRole: (r: string) => void;
@@ -24,6 +26,8 @@ export default function Settings({
   resetting: boolean;
   hasUploads: boolean;
   onOpenSources: () => void;
+  pushToast: (message: string, tone?: ToastItem["tone"]) => void;
+  onRefreshConfig: () => void;        // refresh /config after a provider switch (top-bar)
 }) {
   const [draft, setDraft] = React.useState(role);
   // When the saved role changes elsewhere (load from storage, Clear), resync the draft.
@@ -86,6 +90,9 @@ export default function Settings({
           The current mode is always shown next to the chat input.
         </p>
       </Card>
+
+      {/* ---- AI provider — selector, status, validation (sprint §14) ---- */}
+      <ProviderSettings pushToast={pushToast} onApplied={onRefreshConfig} />
 
       {/* ---- engine ---- */}
       <Card className="p-4">

@@ -7,10 +7,14 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
-from app.config import get_settings
+from app.config import (clear_runtime_provider, get_settings, provider_override_state,
+                        set_runtime_provider)
 from app.engine import get_engine
-from app.models import (AskRequest, AskResponse, IngestResult,
-                        Inventory, RouteDecision, SourceInfo, Trace)
+from app.llm.providers import PROVIDER_CATALOG
+from app.models import (AskRequest, AskResponse, IngestResult, Inventory,
+                        ProviderOption, ProviderStatus, ProvidersResponse,
+                        ProviderSwitchRequest, ProviderValidation, RouteDecision,
+                        SourceInfo, Trace)
 
 router = APIRouter()
 log = logging.getLogger("aba.api")
@@ -37,25 +41,61 @@ def health() -> dict:
     }
 
 
+def _current_provider_status() -> ProviderStatus:
+    """The live status of the *applied* provider, with the engine's real embedding backend
+    and the informational deployment label stamped in. Shared by /config and /providers."""
+    eng = get_engine()
+    embedding_backend = eng.document_source.index.embedder.backend
+    from app.llm.client import get_llm
+    status = get_llm().provider_status()
+    status.embedding_model = embedding_backend          # provider doesn't own embeddings
+    status.deployment_mode = PROVIDER_CATALOG.get(status.provider, {}).get("deployment_mode", "")
+    return status
+
+
+def _provider_options() -> list[ProviderOption]:
+    return [
+        ProviderOption(name=name, label=meta["label"], transport=meta["transport"],
+                       deployment_mode=meta["deployment_mode"], description=meta["description"])
+        for name, meta in PROVIDER_CATALOG.items()
+    ]
+
+
+def _providers_response() -> ProvidersResponse:
+    st = provider_override_state()
+    return ProvidersResponse(
+        applied=st["applied"], default=st["default"], source=st["source"],
+        overridden=st["overridden"], status=_current_provider_status(),
+        options=_provider_options(),
+    )
+
+
 @router.get("/config")
 def config() -> dict:
     s = get_settings()
     eng = get_engine()
+    embedding_backend = eng.document_source.index.embedder.backend
+
+    # Live provider diagnostics (sprint §13, Task C). The embedding backend is the engine's
+    # actual one (the provider doesn't own embeddings — they are decoupled), so we stamp it in.
+    status = _current_provider_status()
+
     return {
         "mode": "live" if s.use_live_llm else "offline",
-        "provider": s.llm_provider,
+        "provider": s.resolved_provider,
         "models": {
             "generation": s.model_generation,
             "router": s.model_router,
             "sql": s.model_sql,
         },
-        "embedding_backend": eng.document_source.index.embedder.backend,
+        "embedding_backend": embedding_backend,
         "vector_backend": eng.document_source.index.store.backend,
         "reranker_backend": (
             eng.document_source.index.reranker.backend
             if eng.document_source.index.reranker else "disabled"
         ),
         "has_api_key": s.has_api_key,
+        "provider_status": status.model_dump(),
     }
 
 
@@ -155,3 +195,46 @@ def reset() -> Inventory:
     eng = get_engine()
     eng.reset()
     return eng.inventory()
+
+
+# -- provider selection (sprint §14) -----------------------------------------
+
+@router.get("/providers", response_model=ProvidersResponse)
+def providers() -> ProvidersResponse:
+    """The provider selector's full state: applied vs. server default, live status, options."""
+    return _providers_response()
+
+
+@router.post("/provider", response_model=ProvidersResponse)
+def switch_provider(req: ProviderSwitchRequest) -> ProvidersResponse:
+    """Switch the active inference provider at runtime (persisted, reload-safe).
+
+    Only the LLM client is rebuilt — the engine, the hybrid index, the embeddings, and the
+    uploaded workspace are provider-independent and are preserved across the switch."""
+    from app.llm.client import reset_llm
+    try:
+        set_runtime_provider(req.provider)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception:
+        log.exception("provider switch failed for %r", req.provider)
+        raise HTTPException(500, "Could not switch provider. Please try again.")
+    reset_llm()
+    return _providers_response()
+
+
+@router.post("/provider/default", response_model=ProvidersResponse)
+def use_default_provider() -> ProvidersResponse:
+    """Drop any UI override and revert to the server-configured (env/`ABA_PROVIDER`) default."""
+    from app.llm.client import reset_llm
+    clear_runtime_provider()
+    reset_llm()
+    return _providers_response()
+
+
+@router.post("/provider/validate", response_model=ProviderValidation)
+def validate_active_provider() -> ProviderValidation:
+    """Validate the active provider end to end (health + routing + generation + embeddings).
+    Never raises and never leaks a stack trace — failures come back as clean checks + fixes."""
+    from app.llm.validate import validate_provider
+    return validate_provider()

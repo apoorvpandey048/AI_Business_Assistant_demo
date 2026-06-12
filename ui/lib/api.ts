@@ -1,5 +1,6 @@
 import type {
-  AppConfig, AskResponse, IngestResult, Inventory, SourceInfo,
+  AppConfig, AskResponse, IngestResult, Inventory, ProvidersResponse,
+  ProviderValidation, SourceInfo,
 } from "./types";
 
 // All API calls go through the UI's own origin at /api/*, which the Next server proxies
@@ -73,4 +74,44 @@ export async function resetWorkspace(): Promise<Inventory> {
   const res = await fetch(`${apiBase()}/reset`, { method: "POST" });
   if (!res.ok) throw new Error(`reset → ${res.status}`);
   return res.json();
+}
+
+/* ---------------- provider selection (sprint §14) ---------------- */
+
+export async function fetchProviders(): Promise<ProvidersResponse> {
+  return getJSON<ProvidersResponse>("/providers");
+}
+
+async function postJSON<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${apiBase()}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      const j = await res.json();
+      if (j?.detail) detail = j.detail;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+// Switch the active inference provider (persisted server-side, reload-safe).
+export async function switchProvider(provider: string): Promise<ProvidersResponse> {
+  return postJSON<ProvidersResponse>("/provider", { provider });
+}
+
+// Revert to the server-configured (env/ABA_PROVIDER) default.
+export async function useDefaultProvider(): Promise<ProvidersResponse> {
+  return postJSON<ProvidersResponse>("/provider/default");
+}
+
+// Validate the active provider end to end (health / routing / generation / embeddings).
+export async function validateProvider(): Promise<ProviderValidation> {
+  return postJSON<ProviderValidation>("/provider/validate");
 }

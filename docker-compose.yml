@@ -3,8 +3,13 @@
 #   • API  →  http://localhost:8000  (FastAPI; /docs for the OpenAPI UI)
 #   • UI   →  http://localhost:3000  (Next.js inspector)
 #
-# Live Claude answers: put ANTHROPIC_API_KEY in a .env file next to this file.
-# Without a key the demo runs in deterministic OFFLINE mode (still fully traceable).
+# Provider (sprint §13): set in a .env file next to this file (see docs/setup-*.md).
+#   • OpenAI:    ABA_PROVIDER=openai   + OPENAI_API_KEY
+#   • Anthropic: ABA_PROVIDER=anthropic + ANTHROPIC_API_KEY
+#   • Local:     ABA_PROVIDER=ollama   + run Ollama ON THE HOST (`ollama serve`,
+#                `ollama pull qwen2.5:7b-instruct`). The container reaches it via
+#                ABA_OLLAMA_URL=http://host.docker.internal:11434 (default below).
+# Without a key/provider the app runs in deterministic OFFLINE mode (still fully traceable).
 #
 # Optional production swaps:
 #   • True BGE-M3 multilingual embeddings:  build arg INSTALL_ML=true (see Dockerfile)
@@ -20,20 +25,35 @@ services:
     ports:
       - "8000:8000"
     environment:
+      # Provider (sprint §13). ABA_PROVIDER=openai|ollama|anthropic; legacy var still honored.
+      ABA_PROVIDER: ${ABA_PROVIDER:-}
       ABA_LLM_PROVIDER: ${ABA_LLM_PROVIDER:-anthropic}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ABA_OPENAI_BASE_URL: ${ABA_OPENAI_BASE_URL:-https://api.openai.com/v1}
+      # Local Ollama on the HOST: default to the host gateway so the container can reach it
+      # (Docker Desktop resolves host.docker.internal; Linux uses the extra_hosts mapping).
+      ABA_OLLAMA_URL: ${ABA_OLLAMA_URL:-http://host.docker.internal:11434}
+      ABA_OLLAMA_MODEL: ${ABA_OLLAMA_MODEL:-qwen2.5:7b-instruct}
       ABA_OFFLINE_MODE: ${ABA_OFFLINE_MODE:-auto}
-      ABA_MODEL_GENERATION: ${ABA_MODEL_GENERATION:-claude-opus-4-8}
-      ABA_MODEL_ROUTER: ${ABA_MODEL_ROUTER:-claude-sonnet-4-6}
-      ABA_MODEL_SQL: ${ABA_MODEL_SQL:-claude-sonnet-4-6}
+      # Empty → resolved from the provider (anthropic→Claude, openai→gpt-4o, ollama→qwen2.5).
+      ABA_MODEL_GENERATION: ${ABA_MODEL_GENERATION:-}
+      ABA_MODEL_ROUTER: ${ABA_MODEL_ROUTER:-}
+      ABA_MODEL_SQL: ${ABA_MODEL_SQL:-}
+      ABA_EMBEDDING_BACKEND: ${ABA_EMBEDDING_BACKEND:-auto}
+      ABA_EMBEDDING_DEVICE: ${ABA_EMBEDDING_DEVICE:-}
       ABA_VECTOR_BACKEND: ${ABA_VECTOR_BACKEND:-numpy}
       ABA_QDRANT_URL: http://qdrant:6333
+    extra_hosts:
+      # lets the container reach an Ollama running on the host (native Linux)
+      - "host.docker.internal:host-gateway"
     volumes:
       # Persist the embedding + LLM-response cache across restarts so the engine
       # warms up instantly (no re-embedding the corpus on every (re)start).
       - aba_cache:/app/data/cache
+      # Persist a UI provider switch (sprint §14) so it survives a container restart —
+      # without this volume the override is reload-safe but not restart-safe in Docker.
+      - aba_runtime:/app/data/runtime
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
       interval: 10s
@@ -77,3 +97,4 @@ services:
 
 volumes:
   aba_cache:
+  aba_runtime:

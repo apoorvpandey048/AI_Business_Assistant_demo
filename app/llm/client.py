@@ -1,85 +1,48 @@
 """Provider-agnostic LLM client.
 
-Supports two provider families through one interface:
-- ``anthropic``  → Claude via the Anthropic SDK (structured output via output_config).
-- ``openai``     → ANY OpenAI-compatible endpoint via the OpenAI SDK + base_url:
-                   OpenAI, Groq (free), Gemini's compat API (free), Ollama (local/free),
-                   OpenRouter, Together, …
+The client owns everything that is the SAME across providers — the response cache, the
+deterministic OFFLINE fallback ladder, and `LLMCall` accounting — and delegates the
+actual model call to a provider strategy (`app/llm/providers/`):
+- ``anthropic`` → Claude via the Anthropic SDK.
+- ``openai``    → any OpenAI-compatible hosted endpoint (OpenAI, Groq, Gemini compat…).
+- ``ollama``    → a local Ollama server over the OpenAI-compatible transport.
 
-Structured output uses each provider's JSON mode where available and a tolerant
-JSON extractor otherwise, so the same call sites work across all of them.
-
-A deterministic OFFLINE path remains: every call site supplies a ``fallback`` so the
-whole pipeline keeps working (and stays grounded) with no key or network. Live
-responses are cached to disk so a previously-asked question replays identically.
+Every call site supplies a ``fallback`` so the whole pipeline keeps working (and stays
+grounded) with no key, no network, or a provider error — a down Ollama looks like offline
+mode, never a crash. Live responses are cached to disk so a prior question replays identically.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-import re
 import time
-from pathlib import Path
 from typing import Any, Callable, Optional
 
 from app.config import Settings, get_settings
-from app.models import LLMCall
-
-try:
-    import anthropic
-except Exception:  # pragma: no cover
-    anthropic = None  # type: ignore
-
-try:
-    import openai
-except Exception:  # pragma: no cover
-    openai = None  # type: ignore
+from app.llm.providers import LLMProvider, make_provider
+from app.models import LLMCall, ProviderStatus
 
 
 Fallback = Callable[[], Any]
 
 
-def _extract_json(text: str) -> Any:
-    """Tolerantly pull a JSON object out of a model response (handles code fences)."""
-    t = (text or "").strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```(?:json)?", "", t).strip()
-        t = re.sub(r"```$", "", t).strip()
-    try:
-        return json.loads(t)
-    except Exception:
-        start, end = t.find("{"), t.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            return json.loads(t[start:end + 1])
-        raise
-
-
 class LLMClient:
     def __init__(self, settings: Optional[Settings] = None) -> None:
         self.s = settings or get_settings()
-        self._anthropic = None
-        self._openai = None
+        self.provider: LLMProvider = make_provider(self.s)
         self._cache_path = self.s.cache_dir / "llm_cache.json"
         self._cache: dict[str, Any] = self._load_cache()
 
-    # -- provider clients (lazy) -------------------------------------------
-    @property
-    def anthropic_client(self):
-        if self._anthropic is None and anthropic is not None and self.s.anthropic_key:
-            self._anthropic = anthropic.Anthropic(api_key=self.s.anthropic_key)
-        return self._anthropic
-
-    @property
-    def openai_client(self):
-        if self._openai is None and openai is not None:
-            self._openai = openai.OpenAI(
-                api_key=self.s.openai_key or "no-key",  # local endpoints ignore it
-                base_url=self.s.openai_base_url,
+    def provider_status(self) -> ProviderStatus:
+        """Read-only diagnostics for the configured provider (never raises)."""
+        try:
+            return self.provider.status()
+        except Exception as exc:  # status must never break the page
+            return ProviderStatus(
+                provider=self.s.resolved_provider, transport=self.provider.transport,
+                connection="unknown", health="unavailable",
+                detail=f"Could not determine provider status: {exc}",
             )
-        return self._openai
-
-    def _live_client(self):
-        return self.openai_client if self.s.llm_provider == "openai" else self.anthropic_client
 
     # -- cache -------------------------------------------------------------
     def _load_cache(self) -> dict[str, Any]:
@@ -127,9 +90,11 @@ class LLMClient:
                 duration_ms=round((time.perf_counter() - t0) * 1000, 1),
             )
 
-        if self.s.use_live_llm and self._live_client() is not None:
+        if self.s.use_live_llm and self.provider.available():
             try:
-                result, usage = self._dispatch(model, system, user, schema, max_tokens)
+                result, usage = self.provider.generate(
+                    model=model, system=system, user=user,
+                    schema=schema, max_tokens=max_tokens)
                 if self.s.llm_cache_write:
                     self._cache[key] = result
                     self._save_cache()
@@ -159,55 +124,6 @@ class LLMClient:
             f"No live LLM, no cache, and no fallback for purpose={purpose!r}."
         )
 
-    def _dispatch(self, model, system, user, schema, max_tokens):
-        if self.s.llm_provider == "openai":
-            return self._call_openai(model, system, user, schema, max_tokens)
-        return self._call_anthropic(model, system, user, schema, max_tokens)
-
-    # -- anthropic ---------------------------------------------------------
-    def _call_anthropic(self, model, system, user, schema, max_tokens):
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "max_tokens": max_tokens or self.s.llm_max_tokens,
-            "system": system,
-            "messages": [{"role": "user", "content": user}],
-        }
-        if schema is not None:
-            kwargs["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
-        resp = self.anthropic_client.messages.create(**kwargs)
-        text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
-        usage = (getattr(resp.usage, "input_tokens", None),
-                 getattr(resp.usage, "output_tokens", None))
-        return (json.loads(text) if schema is not None else text), usage
-
-    # -- openai-compatible (OpenAI / Groq / Gemini / Ollama / …) ------------
-    def _call_openai(self, model, system, user, schema, max_tokens):
-        sys = system
-        if schema is not None:
-            sys = (system + "\n\nRespond with a SINGLE JSON object conforming to this "
-                   "JSON schema. Output JSON only — no markdown, no prose:\n"
-                   + json.dumps(schema))
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": [{"role": "system", "content": sys},
-                         {"role": "user", "content": user}],
-            "max_tokens": max_tokens or self.s.llm_max_tokens,
-            "temperature": 0,  # deterministic routing / SQL / grounded generation
-        }
-        resp = None
-        if schema is not None:
-            try:  # JSON mode where supported (OpenAI, Groq)
-                resp = self.openai_client.chat.completions.create(
-                    response_format={"type": "json_object"}, **kwargs)
-            except Exception:
-                resp = None
-        if resp is None:
-            resp = self.openai_client.chat.completions.create(**kwargs)
-        text = resp.choices[0].message.content or ""
-        usage = (getattr(getattr(resp, "usage", None), "prompt_tokens", None),
-                 getattr(getattr(resp, "usage", None), "completion_tokens", None))
-        return (_extract_json(text) if schema is not None else text), usage
-
 
 _client: Optional[LLMClient] = None
 
@@ -217,3 +133,13 @@ def get_llm() -> LLMClient:
     if _client is None:
         _client = LLMClient()
     return _client
+
+
+def reset_llm() -> None:
+    """Drop the client singleton so the next get_llm() rebuilds with the current settings.
+
+    Used after a runtime provider switch (sprint §14): the new client picks up the freshly
+    resolved provider + models. The engine, the index, and the embedder are NOT touched —
+    they are provider-independent — so the workspace is preserved across a switch."""
+    global _client
+    _client = None

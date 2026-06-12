@@ -128,6 +128,11 @@ export default function Page() {
     fetchSources().then(setSources).catch(() => {});
   };
 
+  // After a provider switch, re-pull /config so the top-bar mode + model reflect reality.
+  const refreshConfig = React.useCallback(() => {
+    fetchConfig().then(setConfig).catch(() => {});
+  }, []);
+
   const clearQuestion = () => {
     askSeq.current += 1;                   // invalidate any in-flight request
     setQuestion("");
@@ -278,6 +283,7 @@ export default function Page() {
             config={config} sources={sources}
             onReset={handleReset} resetting={resetting} hasUploads={hasUploads}
             onOpenSources={() => setTab("sources")}
+            pushToast={pushToast} onRefreshConfig={refreshConfig}
           />
         )}
       </main>

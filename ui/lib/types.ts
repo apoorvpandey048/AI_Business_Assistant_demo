@@ -140,6 +140,60 @@ export interface SourceInfo {
   details: Record<string, unknown>;
 }
 
+export interface ProviderStatus {
+  provider: string;                // openai | ollama | anthropic
+  transport: string;               // anthropic | openai-compatible
+  generation_model: string;
+  router_model: string;
+  sql_model: string;
+  embedding_model: string;         // active embedding backend label
+  base_url?: string | null;
+  connection: "connected" | "disconnected" | "unknown";
+  health: "healthy" | "degraded" | "unavailable";
+  detail: string;
+  fix?: string | null;             // exact remediation command when not healthy
+  offline: boolean;
+  deployment_mode?: string;        // informational label (Production Recommended / …)
+}
+
+/* ---------------- provider selection (sprint §14) ---------------- */
+export type ProviderName = "openai" | "ollama" | "anthropic";
+
+export interface ProviderOption {
+  name: ProviderName | string;
+  label: string;
+  transport: string;
+  deployment_mode: string;
+  description: string;
+}
+
+export interface ProvidersResponse {
+  applied: string;                 // provider calls actually use right now
+  default: string;                 // env/ABA_PROVIDER default (server-configured)
+  source: "override" | "env";
+  overridden: boolean;
+  status: ProviderStatus;
+  options: ProviderOption[];
+}
+
+export type CheckName = "health" | "routing" | "generation" | "embeddings";
+export type CheckStatus = "pass" | "fail" | "skipped";
+
+export interface ProviderCheck {
+  name: CheckName;
+  status: CheckStatus;
+  detail: string;
+  fix?: string | null;
+  duration_ms: number;
+}
+
+export interface ProviderValidation {
+  provider: string;
+  ok: boolean;
+  summary: string;
+  checks: ProviderCheck[];
+}
+
 export interface AppConfig {
   mode: string;
   provider: string;
@@ -148,6 +202,7 @@ export interface AppConfig {
   vector_backend: string;
   reranker_backend: string;
   has_api_key: boolean;
+  provider_status?: ProviderStatus | null;
 }
 
 /* ---------------- ingestion & inventory ---------------- */

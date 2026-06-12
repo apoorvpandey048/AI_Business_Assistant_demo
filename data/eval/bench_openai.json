@@ -1,0 +1,171 @@
+{
+  "provider": "openai",
+  "generation_model": "gpt-4o",
+  "router_model": "gpt-4o-mini",
+  "embedding_backend": "openai:text-embedding-3-small",
+  "mode": "live",
+  "n_questions": 12,
+  "ingestion_build_ms": 1241.1,
+  "embedding_ms_avg": 4535.4,
+  "embedding_ms_samples": [
+    11731.1,
+    1094.7,
+    780.4
+  ],
+  "latency": {
+    "avg_total_ms": 12320.3,
+    "p50_total_ms": 14416.4,
+    "p95_total_ms": 19278.7,
+    "max_total_ms": 19884.2,
+    "avg_routing_ms": 6570.0,
+    "avg_generation_ms": 3579.0
+  },
+  "vram_peak_mib": 0.0,
+  "process_rss_mib": 111.1,
+  "rows": [
+    {
+      "kind": "sql",
+      "q": "What is the total outstanding invoice amount per customer?",
+      "route": "HYBRID",
+      "mode": "live",
+      "total_ms": 14416.4,
+      "routing_ms": 10137.1,
+      "sql_ms": 1687.1,
+      "generation_ms": 3274.3,
+      "n_llm_calls": 3,
+      "insufficient": false
+    },
+    {
+      "kind": "sql",
+      "q": "Which customers have overdue invoices?",
+      "route": "SQL",
+      "mode": "live",
+      "total_ms": 12055.8,
+      "routing_ms": 8536.5,
+      "sql_ms": 1482.7,
+      "generation_ms": 2660.6,
+      "n_llm_calls": 3,
+      "insufficient": false
+    },
+    {
+      "kind": "pdf",
+      "q": "What do our contracts say about service suspension?",
+      "route": "PDF",
+      "mode": "live",
+      "total_ms": 19278.7,
+      "routing_ms": 15351.6,
+      "sql_ms": 0,
+      "generation_ms": 2864.0,
+      "n_llm_calls": 2,
+      "insufficient": false
+    },
+    {
+      "kind": "pdf",
+      "q": "What penalties are defined in the contracts?",
+      "route": "PDF",
+      "mode": "live",
+      "total_ms": 16092.0,
+      "routing_ms": 6101.5,
+      "sql_ms": 0,
+      "generation_ms": 3300.8,
+      "n_llm_calls": 2,
+      "insufficient": false
+    },
+    {
+      "kind": "hybrid",
+      "q": "What contracts expire in the next 90 days and what penalties are defined in those contracts?",
+      "route": "HYBRID",
+      "mode": "live",
+      "total_ms": 15803.4,
+      "routing_ms": 7299.5,
+      "sql_ms": 2636.4,
+      "generation_ms": 4817.1,
+      "n_llm_calls": 3,
+      "insufficient": false
+    },
+    {
+      "kind": "hybrid",
+      "q": "Which customers have overdue invoices and what does the agreement say about service suspension?",
+      "route": "HYBRID",
+      "mode": "live",
+      "total_ms": 12440.5,
+      "routing_ms": 5925.4,
+      "sql_ms": 1757.6,
+      "generation_ms": 3000.4,
+      "n_llm_calls": 3,
+      "insufficient": false
+    },
+    {
+      "kind": "hybrid",
+      "q": "Show all active projects and summarize the risks mentioned in their documentation.",
+      "route": "HYBRID",
+      "mode": "live",
+      "total_ms": 14644.4,
+      "routing_ms": 5157.8,
+      "sql_ms": 4418.6,
+      "generation_ms": 6921.7,
+      "n_llm_calls": 3,
+      "insufficient": false
+    },
+    {
+      "kind": "hebrew",
+      "q": "\u05de\u05d4 \u05d0\u05d5\u05de\u05e8\u05d9\u05dd \u05d4\u05d7\u05d5\u05d6\u05d9\u05dd \u05e2\u05dc \u05d4\u05e9\u05e2\u05d9\u05d9\u05ea \u05e9\u05d9\u05e8\u05d5\u05ea?",
+      "route": "PDF",
+      "mode": "live",
+      "total_ms": 19884.2,
+      "routing_ms": 4534.9,
+      "sql_ms": 0,
+      "generation_ms": 2840.9,
+      "n_llm_calls": 2,
+      "insufficient": false
+    },
+    {
+      "kind": "hebrew",
+      "q": "\u05d0\u05d9\u05dc\u05d5 \u05dc\u05e7\u05d5\u05d7\u05d5\u05ea \u05d9\u05e9 \u05dc\u05d4\u05dd \u05d7\u05e9\u05d1\u05d5\u05e0\u05d9\u05d5\u05ea \u05d1\u05d0\u05d9\u05d7\u05d5\u05e8?",
+      "route": "SQL",
+      "mode": "live",
+      "total_ms": 9006.2,
+      "routing_ms": 4324.3,
+      "sql_ms": 1237.9,
+      "generation_ms": 2531.1,
+      "n_llm_calls": 3,
+      "insufficient": false
+    },
+    {
+      "kind": "unanswerable",
+      "q": "What is our employee headcount in Berlin?",
+      "route": "NONE",
+      "mode": "live",
+      "total_ms": 3606.3,
+      "routing_ms": 2994.9,
+      "sql_ms": 0,
+      "generation_ms": 0,
+      "n_llm_calls": 1,
+      "insufficient": true
+    },
+    {
+      "kind": "unanswerable",
+      "q": "What was the weather in Tel Aviv yesterday?",
+      "route": "NONE",
+      "mode": "live",
+      "total_ms": 4791.7,
+      "routing_ms": 4006.0,
+      "sql_ms": 0,
+      "generation_ms": 0,
+      "n_llm_calls": 1,
+      "insufficient": true
+    },
+    {
+      "kind": "keyword",
+      "q": "Show contracts referencing SLA-2025.",
+      "route": "PDF",
+      "mode": "live",
+      "total_ms": 5824.5,
+      "routing_ms": 4470.8,
+      "sql_ms": 0,
+      "generation_ms": 0,
+      "n_llm_calls": 1,
+      "insufficient": false
+    }
+  ]
+}
