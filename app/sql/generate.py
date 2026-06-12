@@ -34,7 +34,11 @@ def _system(today: str) -> str:
         "date columns for 'expire/expiring', amount columns for 'total/outstanding', status), PLUS "
         "human-readable identifiers (customer name, *_ref, title) AND any linking columns that point "
         "to source documents (pdf_file, doc_file) or entities (customer_id). NEVER return only id "
-        "columns — results must be self-explanatory on their own. Return JSON only."
+        "columns — results must be self-explanatory on their own.\n"
+        "For a yes/no or status question about a SPECIFIC entity (an invoice/contract/project "
+        "reference like INV-1187), return that entity's row(s) including the reference and its "
+        "status/amount/date columns — never a bare COUNT or EXISTS, which hides the entity and "
+        "its actual state. Return JSON only."
     )
 
 
@@ -54,6 +58,20 @@ def _fallback_sql(nl: str, today: str) -> dict[str, str]:
                 f"WHERE i.invoice_ref = '{ref}'"
             ),
             "rationale": f"Invoice {ref} with its customer, amount and status.",
+        }
+    # Same for a contract reference ("When does ACM-MSA-2025 expire?") — return the
+    # contract's own row with its dates/value/status, never a generic listing.
+    m = re.search(r"\b[A-Z]{2,5}-[A-Z]{1,5}-\d{2,5}\b", nl, re.I)
+    if m and not m.group(0).upper().startswith(("INV-", "SLA-")):
+        ref = m.group(0).upper()
+        return {
+            "sql": (
+                "SELECT ct.contract_ref, c.name AS customer, ct.title, ct.pdf_file, "
+                "ct.start_date, ct.end_date, ct.value_usd, ct.status "
+                "FROM contracts ct JOIN customers c ON c.id = ct.customer_id "
+                f"WHERE ct.contract_ref = '{ref}'"
+            ),
+            "rationale": f"Contract {ref} with its customer, dates, value and status.",
         }
     if "overdue" in q:
         return {

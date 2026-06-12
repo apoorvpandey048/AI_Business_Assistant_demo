@@ -90,12 +90,18 @@ class StructuredSource(BaseSource):
     # -- query --------------------------------------------------------------
     def run(
         self, nl_query: str, purpose: str = "sql", entity_hint: Optional[str] = None,
-        allowed_tables: Optional[list[str]] = None,
+        allowed_tables: Optional[list[str]] = None, forced_sql: Optional[str] = None,
     ) -> tuple[list[Evidence], SqlExecutionTrace, Any]:
+        """`forced_sql` skips generation and runs the given SELECT through the same
+        validation/execution path — used by the orchestrator's deterministic backstop
+        when the model's SQL failed to cover the question's entity."""
         scoped = set(allowed_tables) if allowed_tables is not None else None
-        sql, rationale, call = generate_sql(
-            nl_query, self._scoped_schema_text(scoped), entity_hint=entity_hint
-        )
+        if forced_sql is not None:
+            sql, call = forced_sql, None
+        else:
+            sql, _rationale, call = generate_sql(
+                nl_query, self._scoped_schema_text(scoped), entity_hint=entity_hint
+            )
         trace = SqlExecutionTrace(
             purpose=purpose, natural_language=nl_query, generated_sql=sql,
         )

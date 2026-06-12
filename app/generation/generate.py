@@ -55,6 +55,10 @@ def _system_prompt(role_instructions: str | None = None) -> str:
         "bare filename alone.\n"
         "If the evidence genuinely does not contain enough to answer, set insufficient=true and "
         "briefly say what is missing — do NOT fabricate.\n"
+        "If your answer states that the evidence does NOT mention or contain the asked-about "
+        "entity, term, or fact ('the documents do not mention X'), that IS an insufficient-"
+        "evidence outcome: set insufficient=true and citations=[] — never attach citations to "
+        "a statement of absence.\n"
         "Write the answer in the language of the QUESTION (Hebrew only if the question itself is "
         "in Hebrew), regardless of the language of any evidence. Be concise and specific. "
         "'citations' must list the evidence ids you actually used. Return JSON only."
@@ -138,6 +142,27 @@ def _relevant_docs(question: str, doc_evidence: list[Evidence]) -> list[Evidence
 
 
 _HEB_RE = re.compile(r"[֐-׿]")
+
+# Statements of absence — "the documents do not mention X" — are insufficient-evidence
+# outcomes even when the model forgets to set the flag. Matched conservatively (see
+# _is_negative_mention_answer) so a mixed answer ("does not mention X, but defines Y
+# [e2]") is never flipped. Found by the live honesty battery (un-he-unknown-customer).
+_NEGATIVE_MENTION = re.compile(
+    r"(do(?:es)? not (?:mention|contain|appear|refer)|no document (?:mentions|contains)|"
+    r"not mentioned|no information about|no evidence (?:of|about|for)|"
+    r"אינו מזכיר|אינם מזכירים|לא מזכיר|אין אזכור|לא נמצא מידע|אינו מופיע|אינו מכיל)",
+    re.IGNORECASE,
+)
+_INLINE_CITE = re.compile(r"\[e\d+\]")
+
+
+def _is_negative_mention_answer(answer: str) -> bool:
+    """True only for short, citation-free statements of absence — the cases where
+    the model answered 'not mentioned' without flagging insufficient. Any inline
+    [eN] citation or substantial length means real grounded content; never flip those."""
+    a = (answer or "").strip()
+    return bool(a) and len(a) <= 240 and not _INLINE_CITE.search(a) \
+        and bool(_NEGATIVE_MENTION.search(a))
 
 
 def _insufficient(question: str, reason_en: str, reason_he: str) -> dict[str, Any]:
@@ -249,6 +274,11 @@ def generate_answer(question: str, evidence: list[Evidence],
     answer = (data.get("answer", "") or "").replace("\\n", "\n").strip()
     citations = list(data.get("citations", []))
     insufficient = bool(data.get("insufficient", False))
+    if not insufficient and _is_negative_mention_answer(answer):
+        # "the documents do not mention X" IS an insufficient outcome — honor the
+        # statement even when the model forgot the flag, and drop its citations
+        # (a statement of absence has no supporting passage).
+        insufficient, citations = True, []
     if conflicts and not insufficient:
         answer, citations = _apply_conflicts(question, answer, citations, conflicts)
     return answer, citations, insufficient, call

@@ -59,7 +59,8 @@ class Orchestrator:
         # 2) RETRIEVE per route
         if decision.route == "SQL":
             evidence += self._sql_branch(
-                trace, calls, decision.sql_subquery or question, "sql_main", allowed_tables
+                trace, calls, decision.sql_subquery or question, "sql_main",
+                allowed_tables, original=question,
             )
 
         elif decision.route == "PDF":
@@ -355,7 +356,8 @@ class Orchestrator:
         return ev
 
     def _sql_branch(self, trace: Trace, calls, query: str, purpose: str,
-                    allowed_tables: Optional[list[str]] = None) -> list[Evidence]:
+                    allowed_tables: Optional[list[str]] = None,
+                    original: Optional[str] = None) -> list[Evidence]:
         if allowed_tables is not None and len(allowed_tables) == 0:
             trace.notes.append("No database tables in scope — skipping the structured lookup.")
             return []
@@ -369,7 +371,67 @@ class Orchestrator:
             )
         else:
             trace.notes.append(f"SQL ({purpose}) rejected/failed: {strace.validation_error}")
+
+        # DETERMINISTIC SQL BACKSTOP — the model's SQL must actually COVER the
+        # question. Two live failure shapes (caught by the trust batteries): a bare
+        # COUNT for "has INV-1187 been paid?" hides the entity and its status (and
+        # with it any cross-source conflict), and a name-only column set for an
+        # overdue question starves generation into a false decline. When the result
+        # doesn't cover the question and the rule library has a precise query for
+        # it, run that query through the same validation path and prefer its rows.
+        # Adequacy is judged against the user's ORIGINAL question — the router's
+        # rewritten sub-query may paraphrase away the very keyword ("overdue") the
+        # check and the rule library key on.
+        backstop_sql = self._sql_backstop(original or query, strace)
+        if backstop_sql:
+            ev2, strace2, _ = self.relational.run(
+                query, purpose=f"{purpose}_backstop", allowed_tables=allowed_tables,
+                forced_sql=backstop_sql,
+            )
+            if strace2.valid and strace2.rows:
+                trace.sql_executions.append(strace2)
+                trace.notes.append(
+                    f"SQL backstop — the generated query did not cover the question's "
+                    f"entity/columns; a deterministic rule query returned "
+                    f"{strace2.row_count} row(s) and its results are used instead."
+                )
+                return ev2
         return ev
+
+    def _sql_backstop(self, nl_query: str, strace) -> Optional[str]:
+        """Return a rule-library SQL when the executed result fails to cover the
+        question; None when the result is adequate (the common case)."""
+        from app.sql.generate import _fallback_sql
+
+        if not strace.valid:
+            return None                        # validation failures already decline
+        blob = " ".join(
+            str(v) for row in (strace.rows or []) for v in row.values()
+        ).lower()
+        cols = {c.lower() for c in (strace.columns or [])}
+
+        inadequate = False
+        m = (re.search(r"\bINV-\d+\b", nl_query, re.I)
+             or re.search(r"\b[A-Z]{2,5}-[A-Z]{1,5}-\d{2,5}\b", nl_query))
+        if m and m.group(0).upper().startswith("SLA-"):
+            m = None                           # shared schedule label, not an entity
+        if m and m.group(0).lower() not in blob:
+            inadequate = True                  # entity question; entity absent from result
+        elif "overdue" in nl_query.lower() and strace.rows and not (
+            cols & {"invoice_ref", "amount_usd", "amount", "status"}
+        ):
+            # names (even with a due_date) are not invoice detail — generation has
+            # been observed declining on such thin rows despite them being correct
+            inadequate = True
+        if not inadequate:
+            return None
+
+        candidate = _fallback_sql(nl_query, self.relational.s.today).get("sql", "")
+        normalized = " ".join(candidate.split()).lower()
+        current = " ".join((strace.validated_sql or "").split()).lower()
+        if not candidate or normalized == current:
+            return None                        # no better rule, or same query already ran
+        return candidate
 
     def _hybrid_branch(self, trace: Trace, calls, decision: RouteDecision, question: str,
                        allowed_docs: Optional[list[str]] = None,
@@ -389,6 +451,25 @@ class Orchestrator:
             if call:
                 calls.append(call)
             trace.sql_executions.append(strace)
+            # Same deterministic backstop as the SQL route: a step-1 result that
+            # doesn't cover the question (name-only columns, missing entity ref)
+            # starves both generation AND the entity-linking step below. Judged
+            # against the ORIGINAL question; a no-op on adequate results, so the
+            # regression-gated agentic flow is untouched on clean queries.
+            backstop_sql = self._sql_backstop(question, strace)
+            if backstop_sql:
+                ev2, strace2, _ = self.relational.run(
+                    question, purpose="sql_step_backstop",
+                    allowed_tables=allowed_tables, forced_sql=backstop_sql,
+                )
+                if strace2.valid and strace2.rows:
+                    trace.sql_executions.append(strace2)
+                    trace.notes.append(
+                        "Step 1 backstop — the generated SQL did not cover the "
+                        "question's entity/columns; a deterministic rule query "
+                        f"returned {strace2.row_count} row(s) and is used instead."
+                    )
+                    sql_ev, strace = ev2, strace2
             evidence += sql_ev
             trace.notes.append(
                 f"Step 1 — SQL returned {strace.row_count} row(s)" if strace.valid
