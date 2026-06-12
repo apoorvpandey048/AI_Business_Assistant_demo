@@ -1,0 +1,25 @@
+{"id": "en-doc-suspension", "lang": "en", "question": "What do our contracts say about service suspension?", "expect_doc": null, "expect_in_evidence": "suspend", "expect_insufficient": false}
+{"id": "en-keyword-id", "lang": "en", "question": "Which document mentions INI-MSA-2024?", "expect_doc": "INITECH_Agreement.pdf", "expect_in_evidence": "INI-MSA-2024", "expect_insufficient": false, "expect_only_doc": true}
+{"id": "en-fact-penalties", "lang": "en", "question": "What penalties do the contracts define?", "expect_doc": null, "expect_in_evidence": "penalt", "expect_insufficient": false}
+{"id": "en-sql-outstanding", "lang": "en", "question": "What is the total outstanding invoice amount per customer?", "expect_source_kind": "relational", "expect_insufficient": false}
+{"id": "en-out-of-scope", "lang": "en", "question": "What is our employee headcount in Berlin?", "expect_insufficient": true}
+{"id": "he-tavor-suspension", "lang": "he", "question": "מה אומר ההסכם של תבור מערכות על השעיית שירות וקנסות?", "expect_doc": "TAVOR_Contract_HE.pdf", "expect_in_evidence": "קנס", "expect_insufficient": false}
+{"id": "he-tavor-penalties-q2", "lang": "he", "question": "אילו קנסות מוגדרים בהסכם של תבור?", "expect_doc": "TAVOR_Contract_HE.pdf", "expect_in_evidence": "קנס", "expect_insufficient": false}
+{"id": "he-mixed-latin-id", "lang": "he", "question": "מה כולל נספח SLA-2025 בהסכם של תבור?", "expect_doc": "TAVOR_Contract_HE.pdf", "expect_in_evidence": "SLA-2025", "expect_insufficient": false}
+{"id": "he-payment-terms", "lang": "he", "question": "תוך כמה ימים יש לשלם חשבונית לפי ההסכם של תבור?", "expect_doc": "TAVOR_Contract_HE.pdf", "expect_in_evidence": "שלושים", "expect_insufficient": false}
+{"id": "en-keyword-missing-term", "lang": "en", "question": "Which document mentions ZZGX-9999?", "expect_insufficient": true}
+{"id": "he-mixed-id-not-verbatim", "lang": "he", "question": "מה ההסכם של תבור אומר על SLA2025?", "expect_doc": "TAVOR_Contract_HE.pdf", "expect_insufficient": false, "note": "regression: pre-sprint keyword gate returned 0 evidence (SLA2025 ≠ SLA-2025 verbatim)"}
+{"id": "he-mixed-latin-name", "lang": "he", "question": "אילו קנסות מוגדרים בהסכם של Tavor?", "expect_doc": "TAVOR_Contract_HE.pdf", "expect_in_evidence": "קנס", "expect_insufficient": false, "note": "regression: pre-sprint 'Tavor' gate (doc spells תבור) returned 0 evidence"}
+{"id": "en-keyword-glx", "lang": "en", "question": "Which document mentions GLX-SA-2025?", "expect_doc": "GLOBEX_Service_Agreement.pdf", "expect_in_evidence": "GLX-SA-2025", "expect_insufficient": false, "expect_only_doc": true}
+{"id": "en-keyword-umb", "lang": "en", "question": "Which document mentions UMB-SA-2025?", "expect_doc": "UMBRELLA_Agreement.pdf", "expect_in_evidence": "UMB-SA-2025", "expect_insufficient": false, "expect_only_doc": true}
+{"id": "en-sla-uptime", "lang": "en", "question": "What does SLA-2025 require for monthly uptime?", "expect_in_evidence": "99.5", "expect_insufficient": false}
+{"id": "en-late-fee", "lang": "en", "question": "What late payment fee do the contracts define?", "expect_in_evidence": "late payment fee", "expect_insufficient": false}
+{"id": "en-term-length", "lang": "en", "question": "How long is the initial term of the contracts?", "expect_in_evidence": "twenty-four", "expect_insufficient": false}
+{"id": "en-renewal-notice", "lang": "en", "question": "What is the renewal notice period in the contracts?", "expect_in_evidence": "sixty", "expect_insufficient": false}
+{"id": "en-suspension-notice", "lang": "en", "question": "What notice is required before service suspension?", "expect_in_evidence": "five", "expect_insufficient": false}
+{"id": "en-suspension-45", "lang": "en", "question": "Which agreements allow suspension after 45 days of non-payment?", "expect_in_evidence": "45", "expect_insufficient": false}
+{"id": "en-parties-initech", "lang": "en", "question": "Who are the parties to the Initech agreement?", "expect_doc": "INITECH_Agreement.pdf", "expect_in_evidence": "Northwind Solutions", "expect_insufficient": false}
+{"id": "en-umbrella-penalty", "lang": "en", "question": "What does the Umbrella agreement say about early termination penalties?", "expect_doc": "UMBRELLA_Agreement.pdf", "expect_in_evidence": "20%", "expect_insufficient": false}
+{"id": "en-atlas-risks", "lang": "en", "question": "What risks does Project Atlas face?", "expect_doc": "PRJ_ATLAS_Brief.pdf", "expect_in_evidence": "legacy export", "expect_insufficient": false}
+{"id": "en-orion-mitigation", "lang": "en", "question": "What mitigation does Project Orion plan for the ERP upgrade risk?", "expect_doc": "PRJ_ORION_Brief.pdf", "expect_in_evidence": "compatibility shim", "expect_insufficient": false}
+{"id": "he-tavor-uptime", "lang": "he", "question": "מהי רמת הזמינות החודשית לפי ההסכם של תבור?", "expect_doc": "TAVOR_Contract_HE.pdf", "expect_in_evidence": "99.5", "expect_insufficient": false}

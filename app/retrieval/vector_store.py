@@ -1,7 +1,7 @@
 """Pluggable dense vector store.
 
 Default: an in-process NumPy store (zero dependencies, fully deterministic) — ideal
-for a demo whose value is orchestration, not the vector DB. A Qdrant adapter behind
+for a product whose value is orchestration, not the vector DB. A Qdrant adapter behind
 the same interface is a one-flag production swap (ABA_VECTOR_BACKEND=qdrant), which
 reinforces the thesis we told the client: orchestration matters more than the store.
 """
@@ -59,6 +59,12 @@ class NumpyVectorStore:
         if self._matrix is None or len(self._ids) == 0:
             return []
         q = np.asarray(query, dtype=np.float32).reshape(-1)
+        if q.shape[0] != self._matrix.shape[1]:
+            # The query was embedded by a different backend than the index (e.g. the
+            # embeddings API failed mid-session and this query degraded to hashing).
+            # An incompatible vector must not crash retrieval — return no dense hits
+            # and let BM25/keyword carry the query.
+            return []
         scores = self._matrix @ q  # vectors are L2-normalized → cosine similarity
         if allowed_ids is not None:
             mask = np.full(len(self._ids), -np.inf, dtype=np.float32)
@@ -69,8 +75,12 @@ class NumpyVectorStore:
             scores = scores + mask
         k = min(k, len(self._ids))
         top = np.argpartition(-scores, kth=k - 1)[:k]
-        top = top[np.argsort(-scores[top])]
-        return [(self._ids[i], float(scores[i])) for i in top if np.isfinite(scores[i])]
+        # stable tie-break by chunk id — argsort order for equal scores is not
+        # guaranteed across processes, and rank flicker at a tie boundary changes
+        # which evidence is selected (sprint WS10 finding)
+        pairs = [(self._ids[i], float(scores[i])) for i in top if np.isfinite(scores[i])]
+        pairs.sort(key=lambda x: (-x[1], x[0]))
+        return pairs
 
 
 class QdrantVectorStore:

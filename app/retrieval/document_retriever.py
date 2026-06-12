@@ -12,7 +12,9 @@ from app.llm.embeddings import EmbeddingModel
 from app.models import DocumentRetrievalTrace, Evidence, RetrievalCandidate
 from app.retrieval.bm25 import BM25Index
 from app.retrieval.fusion import reciprocal_rank_fusion
-from app.retrieval.intent import QueryIntent, detect_intent, text_hits
+from app.retrieval.intent import (QueryIntent, aspect_groups, content_terms,
+                                  detect_intent, is_document_lookup, term_in_text,
+                                  text_hits)
 from app.retrieval.rerank import Reranker
 from app.retrieval.vector_store import VectorStore, make_vector_store
 
@@ -116,11 +118,46 @@ class DocumentIndex:
     def retrieve(
         self, query: str, filters: Optional[dict[str, Any]] = None,
         final_k: Optional[int] = None, intent: Optional[QueryIntent] = None,
+        extra_queries: Optional[list[str]] = None,
     ) -> tuple[list[Evidence], DocumentRetrievalTrace]:
+        """`extra_queries` are additional phrasings fused into the ranking via RRF —
+        used by the orchestrator to keep the user's ORIGINAL question in play when the
+        router rewrote it (a rewritten instruction sentence must never be able to
+        out-vote the question itself; see trust sprint WS10)."""
         filters = filters or {}
         final_k = final_k or self.s.final_k
         allowed = self._allowed_ids(filters)
         intent = intent or detect_intent(query)
+
+        # Exact keyword hits: chunks that literally contain a distinctive search term.
+        # Computed up front because a keyword intent with ZERO hits decides the strategy.
+        hit_ids: set[str] = set()
+        if intent.gate_terms:
+            hit_ids = {cid for cid, c in self.chunks.items()
+                       if text_hits(c["text"], intent.gate_terms)}
+            if allowed is not None:
+                hit_ids &= allowed
+
+        if intent.mode == "keyword" and not hit_ids:
+            if is_document_lookup(query):
+                # Explicit "which document contains X" with the term found nowhere →
+                # return NOTHING rather than guess with semantically-similar text.
+                # Honesty beats a confident wrong answer.
+                strategy = (f"{intent.reason} No document contains the term — "
+                            "returning no evidence (declining to guess).")
+                return [], self._empty_trace(query, filters, intent, "keyword", strategy)
+            # A fact-EXTRACTION question that merely looked keyword-ish (a name, or a
+            # mixed-language query whose exact term isn't verbatim in the text —
+            # morphology, transliteration, OCR drift). Degrade to semantic retrieval on
+            # the original question instead of returning nothing: a hard empty result
+            # here was the #1 source of false "insufficient evidence" answers.
+            intent = QueryIntent(
+                mode="semantic", terms=intent.terms, gate_terms=[],
+                search_query=query,
+                reason=(f"{intent.reason} Exact term not found verbatim — falling back "
+                        "to hybrid semantic retrieval on the original question."),
+            )
+
         # Search on the intent's terms, not the instruction sentence — so "find the
         # document containing X" searches for X, not for "find/document/containing".
         search_q = intent.search_query or query
@@ -137,19 +174,24 @@ class DocumentIndex:
         bm25_rank = {cid: i + 1 for i, (cid, _) in enumerate(bm25)}
         bm25_score = {cid: sc for cid, sc in bm25}
 
-        # 3) RRF fusion (always computed — drives the semantic path and the inspector)
-        fused = reciprocal_rank_fusion(
-            [[c for c, _ in dense], [c for c, _ in bm25]], k=self.s.rrf_k
-        )
-        fused_order = sorted(fused, key=lambda c: fused[c], reverse=True)
-
-        # Exact keyword hits: chunks that literally contain a distinctive search term.
-        hit_ids: set[str] = set()
-        if intent.gate_terms:
-            hit_ids = {cid for cid, c in self.chunks.items()
-                       if text_hits(c["text"], intent.gate_terms)}
+        # extra phrasings (e.g. the user's original question when the router rewrote
+        # it): each contributes its own dense + bm25 ranked lists to the fusion
+        rankings = [[c for c, _ in dense], [c for c, _ in bm25]]
+        extras = [q2 for q2 in (extra_queries or [])
+                  if q2 and q2.strip() and q2.strip() != search_q.strip()]
+        for q2 in extras:
+            d2 = self.store.search(self.embedder.embed_one(q2), self.s.dense_top_k,
+                                   allowed_ids=allowed)
+            b2 = self.bm25.search(q2, self.s.bm25_top_k)
             if allowed is not None:
-                hit_ids &= allowed
+                b2 = [(cid, sc) for cid, sc in b2 if cid in allowed]
+            rankings += [[c for c, _ in d2], [c for c, _ in b2]]
+
+        # 3) RRF fusion (always computed — drives the semantic path and the inspector)
+        fused = reciprocal_rank_fusion(rankings, k=self.s.rrf_k)
+        # stable tie-break by chunk id so equal fusion scores rank identically in
+        # every process (a tie at the selection boundary must not flicker)
+        fused_order = sorted(fused, key=lambda c: (-fused[c], c))
 
         rerank_scores: dict[str, float] = {}
 
@@ -157,16 +199,13 @@ class DocumentIndex:
             # KEYWORD path: only chunks that actually contain the term are evidence,
             # ranked BM25-first (exact lexical match) then dense. This is what stops a
             # semantically-similar-but-irrelevant chunk from ever being surfaced.
-            if not hit_ids:
-                # Explicit lookup, term found nowhere → return NOTHING rather than guess
-                # with semantically-similar text. Honesty beats a confident wrong answer.
-                strategy = (f"{intent.reason} No document contains the term — "
-                            "returning no evidence (declining to guess).")
-                return [], self._empty_trace(query, filters, intent, "keyword", strategy)
             def kkey(cid: str):
-                return (bm25_score.get(cid, 0.0), dense_score.get(cid, 0.0),
-                        fused.get(cid, 0.0))
-            order = sorted(hit_ids, key=kkey, reverse=True)
+                # negated scores + chunk id: equal-scoring hits must order the same
+                # in every process (hit_ids is a set — raw iteration order is not
+                # deterministic across interpreter runs)
+                return (-bm25_score.get(cid, 0.0), -dense_score.get(cid, 0.0),
+                        -fused.get(cid, 0.0), cid)
+            order = sorted(hit_ids, key=kkey)
             selected = order[:final_k]
             used_mode = "keyword"
             strategy = f"{intent.reason} {len(hit_ids)} exact match(es); other passages excluded."
@@ -184,9 +223,79 @@ class DocumentIndex:
                 )
                 if scored:
                     rerank_scores = scored
-            order = sorted(fused_order, key=lambda c: rerank_scores.get(c, fused[c]),
-                           reverse=True)
+            order = sorted(fused_order,
+                           key=lambda c: (-rerank_scores.get(c, fused[c]), c))
             selected = self._semantic_select(order, fused, final_k)
+
+            # ASPECT QUOTA — a compound question ("penalties AND suspension terms")
+            # must not fill every slot with its dominant aspect while the other
+            # aspect's best passage sits just below the cut (the client-reported
+            # partial-answer failure mode). For each aspect, if an unselected
+            # passage matches it strictly better than anything selected, promote it.
+            groups = aspect_groups(query)
+            if len(groups) < 2:
+                # single-aspect form of the same guarantee: the question's content
+                # terms are one coverage group, so a question term no selected
+                # passage contains ("risks", when title-matching chunks fill every
+                # slot) still pulls in its best-covering passage
+                terms = content_terms(query)
+                groups = [terms] if terms else []
+            if groups:
+                selected, promoted = self._apply_aspect_quota(selected, order,
+                                                              groups, final_k)
+                if promoted:
+                    strategy += (f" Coverage quota: promoted {promoted} passage(s) so "
+                                 f"each part of the question is represented.")
+
+            # HOLISTIC ANCHOR — the single chunk matching the most question terms
+            # (section titles and document names weighted double — "4. Risks" inside
+            # PRJ_ATLAS_Brief.pdf IS the answer locus for "risks of Project Atlas")
+            # must be in the selection. Entity-attribute questions otherwise split
+            # across chunks that each match half the question.
+            terms_all = [t for g in groups for t in g]
+            if terms_all:
+                def _wmatch(cid: str) -> int:
+                    c = self.chunks[cid]
+                    meta = f"{c['document']} {c.get('section') or ''}"
+                    score = 0
+                    for t in terms_all:
+                        if term_in_text(t, meta):
+                            score += 2
+                        elif term_in_text(t, c["text"]):
+                            score += 1
+                    return score
+                best = max((cid for cid in order if cid not in selected),
+                           key=_wmatch, default=None)
+                if best is not None and selected and \
+                        _wmatch(best) > max(_wmatch(c) for c in selected):
+                    victim = self._aspect_victim(selected, groups, keep=best)
+                    if victim is not None:
+                        selected[selected.index(victim)] = best
+                        strategy += (" Holistic anchor: promoted the passage whose "
+                                     "document/section matches the question best.")
+
+            # QUESTION ANCHOR — when auxiliary phrasings (a router rewrite) joined
+            # the fusion, they must not crowd out the user's actual question: the
+            # top dense and top BM25 passage for the PRIMARY query are always
+            # included in the evidence.
+            if extras:
+                anchors = [cid for cid, _ in (dense[:1] + bm25[:1])]
+                anchored = 0
+                for a in dict.fromkeys(anchors):
+                    if a in selected:
+                        continue
+                    if len(selected) < final_k:
+                        selected.append(a)
+                    else:
+                        repl = min((c for c in selected if c not in anchors),
+                                   key=lambda c: fused.get(c, 0.0), default=None)
+                        if repl is None:
+                            continue
+                        selected[selected.index(repl)] = a
+                    anchored += 1
+                if anchored:
+                    strategy += (" Question anchor: included the top passage(s) for "
+                                 "the original question alongside the rewritten query's.")
 
         def score_of(cid: str) -> Optional[float]:
             return rerank_scores.get(cid, fused.get(cid, 0.0))
@@ -223,7 +332,7 @@ class DocumentIndex:
             ))
 
         trace = DocumentRetrievalTrace(
-            query=query, filters=filters,
+            query=query, filters=filters, rewritten_queries=extras,
             embedding_backend=self.embedder.backend,
             reranker_backend=self.reranker.backend if self.reranker else "disabled",
             params=self._params(), candidates=candidates,
@@ -231,6 +340,68 @@ class DocumentIndex:
             exact_hits=len(hit_ids), strategy=strategy,
         )
         return evidence, trace
+
+    def _aspect_match(self, cid: str, terms: list[str]) -> int:
+        """How many of an aspect's terms a chunk matches. Document name and section
+        title count — both are evidence metadata the user sees in the citation, and
+        they carry the entity ("PRJ_ATLAS_Brief.pdf", "4. Risks") when the chunk body
+        is all pronouns and clause text."""
+        c = self.chunks[cid]
+        text = f"{c['document']} {c.get('section') or ''} {c['text']}"
+        return sum(1 for t in terms if term_in_text(t, text))
+
+    def _apply_aspect_quota(
+        self, selected: list[str], order: list[str], groups: list[list[str]],
+        final_k: int,
+    ) -> tuple[list[str], int]:
+        """Coverage maximization per aspect group: a group's term that NO selected
+        passage contains ("suspension", when every slot went to penalty/SLA chunks)
+        marks the aspect as under-covered — promote the ranked passage that covers
+        the most uncovered terms. Generic terms the selection already covers
+        ("service", "define") cannot mask the gap."""
+        sel = list(selected)
+        promoted = 0
+        for terms in groups:
+            uncovered = [t for t in terms
+                         if not any(self._aspect_match(cid, [t]) for cid in sel)]
+            if not uncovered:
+                continue
+            best, best_key = None, (0, 0)
+            for cid in order:
+                if cid in sel:
+                    continue
+                nu = self._aspect_match(cid, uncovered)
+                if nu == 0:
+                    continue
+                # tie-break on TOTAL question-term coverage, so the Risks section of
+                # the asked-about project beats another project's Risks section
+                key = (nu, self._aspect_match(cid, terms))
+                if key > best_key:
+                    best, best_key = cid, key
+            if best is None:
+                continue                       # nothing in the corpus covers this aspect
+            if len(sel) < final_k:
+                sel.append(best)
+            else:
+                victim = self._aspect_victim(sel, groups, keep=best)
+                if victim is None:
+                    continue
+                sel[sel.index(victim)] = best
+            promoted += 1
+        return sel, promoted
+
+    def _aspect_victim(self, sel: list[str], groups: list[list[str]],
+                       keep: str) -> Optional[str]:
+        """The last (lowest-ranked) selected chunk that is redundant for aspect
+        coverage — every aspect term it covers is also covered by another selected
+        chunk. Falls back to the last selected chunk."""
+        all_terms = [t for g in groups for t in g]
+        for cid in reversed(sel):
+            covered = [t for t in all_terms if self._aspect_match(cid, [t])]
+            if all(any(self._aspect_match(o, [t]) for o in sel if o != cid)
+                   for t in covered):
+                return cid
+        return sel[-1] if sel and sel[-1] != keep else None
 
     def _semantic_select(
         self, order: list[str], fused: dict[str, float], final_k: int

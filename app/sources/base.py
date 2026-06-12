@@ -1,24 +1,50 @@
-"""The Source contract.
+"""The source contract — the unified model every knowledge source plugs into.
 
-The router reads each source's capability description to decide where a question
-should go. Adding a new source (CRM, email, cloud storage) means implementing this
-Protocol and registering it — the router and orchestrator need no changes.
+A *source* is anything the assistant can draw evidence from. The router reads each
+source's capability description (``describe()``) to decide where a question should
+go, and the orchestrator collects fully-attributed ``Evidence`` from whichever
+sources the route selects. Adding a new source — CRM, email, cloud storage, case
+management — means subclassing ``BaseSource`` and registering the instance with the
+engine; the router and orchestrator need no changes.
+
+Hierarchy:
+
+    BaseSource              identity + capability description (this module)
+    ├── DocumentSource      unstructured text → hybrid retrieval (document_source.py)
+    ├── StructuredSource    tabular records → schema-aware SQL (structured_source.py)
+    └── CrmSource           roadmap example of an API-backed source (crm_source.py)
+
+External systems connect through *connectors* (see ``app/sources/connectors``),
+which sync or proxy third-party data into one of these source types.
 """
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from abc import ABC, abstractmethod
 
 from app.models import SourceInfo
 
 
-@runtime_checkable
-class Source(Protocol):
-    name: str
-    kind: str  # "documents" | "relational" | "api"
+class BaseSource(ABC):
+    """Identity and self-description shared by every knowledge source.
 
+    Subclasses add their retrieval surface: ``DocumentSource.retrieve()`` returns
+    ranked text passages, ``StructuredSource.run()`` executes validated SQL. Both
+    return ``Evidence`` — the traceability spine that the answer, citations, and
+    inspector all reference.
+    """
+
+    #: Stable identifier used in evidence attribution and routing.
+    name: str = "source"
+    #: What kind of data this source serves: "documents" | "relational" | "api".
+    kind: str = "documents"
+
+    @abstractmethod
     def describe(self) -> SourceInfo:
-        """What this source is and what it can answer — fed to the router."""
-        ...
+        """What this source is and what it can answer — fed to the router.
+
+        Descriptions must be *data-driven* (real table/document names), because the
+        router's capability brief is rebuilt from them after every ingestion.
+        """
 
 
 def router_capability_brief(sources: list[SourceInfo]) -> str:

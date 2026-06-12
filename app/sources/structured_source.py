@@ -1,8 +1,12 @@
-"""Relational (SQLite) source.
+"""Structured (tabular) source — currently backed by SQLite.
 
 Generates schema-aware SQL, validates it (read-only), executes it, and turns each
 row into fully-attributed Evidence (table, row key, exact SQL). Also exposes an
 explicit entity → document linking step used by the agentic hybrid flow.
+
+Any system whose data is rows-and-columns (CRM objects, case-management records,
+exported warehouse tables) lands here: a connector syncs it into a SQLite working
+database, and the existing routing/SQL/citation machinery applies unchanged.
 """
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ from typing import Any, Optional
 from app.config import get_settings
 from app.ingestion.sqlite_introspect import SchemaInfo
 from app.models import Evidence, SourceInfo, SqlExecutionTrace
+from app.sources.base import BaseSource
 from app.sql.execute import SQLExecutionError, execute_readonly
 from app.sql.generate import generate_sql
 from app.sql.validate import (SQLValidationError, primary_table, referenced_tables,
@@ -34,7 +39,7 @@ def _row_text(row: dict[str, Any]) -> str:
     return "; ".join(f"{k}={v}" for k, v in row.items())
 
 
-class RelationalSource:
+class StructuredSource(BaseSource):
     name = "business_db"
     kind = "relational"
 

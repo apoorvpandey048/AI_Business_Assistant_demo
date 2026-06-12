@@ -76,6 +76,8 @@ class IngestedDoc:
     document: str
     language: str
     chunks: list[Chunk] = field(default_factory=list)
+    total_pages: int = 0
+    empty_pages: list[int] = field(default_factory=list)  # pages with no extractable text
 
 
 def _window(text: str, size: int = 700, overlap: int = 120) -> list[str]:
@@ -113,8 +115,13 @@ def ingest_pdf(path: Path) -> IngestedDoc:
     current_section = "Preamble"
     seq = 0
     doc_lang = "en"
+    total_pages = 0
+    empty_pages: list[int] = []
 
     for page_index, (raw, needs_norm) in enumerate(_page_texts(path), start=1):
+        total_pages = page_index
+        if not (raw or "").strip():
+            empty_pages.append(page_index)
         text = normalize_rtl(raw) if needs_norm else raw
         if _HEB.search(text):
             doc_lang = "he"
@@ -148,7 +155,8 @@ def ingest_pdf(path: Path) -> IngestedDoc:
                     )
                 )
 
-    return IngestedDoc(document=document, language=doc_lang, chunks=chunks)
+    return IngestedDoc(document=document, language=doc_lang, chunks=chunks,
+                       total_pages=total_pages, empty_pages=empty_pages)
 
 
 def ingest_pdf_dir(pdf_dir: Path) -> list[IngestedDoc]:

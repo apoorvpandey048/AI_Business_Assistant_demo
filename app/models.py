@@ -127,6 +127,28 @@ class StageTiming(BaseModel):
     duration_ms: float
 
 
+class ConflictSide(BaseModel):
+    """One side of a cross-source disagreement — a value, where it came from, and the
+    evidence id so the conflict is fully citable."""
+
+    evidence_id: str
+    source_name: str
+    citation_label: str
+    value: str                                # display value, e.g. "overdue" / "2027-08-20" / "15%"
+    excerpt: str = ""                         # short supporting excerpt
+
+
+class Conflict(BaseModel):
+    """A detected disagreement between evidence items about the same entity/attribute.
+    Conflicts are REPORTED, never silently resolved — see docs/conflict-resolution.md."""
+
+    entity: str                               # "INV-1187" / "ACM-MSA-2025" / "Acme Corporation"
+    attribute: str                            # payment_status | entity_status | end_date |
+                                              # penalty_percent | late_fee_percent | amount | contract_value
+    sides: list[ConflictSide] = Field(default_factory=list)
+    note: str = ""                            # human-readable one-liner for the trace
+
+
 class CitationCheck(BaseModel):
     verified: bool
     cited_ids: list[str] = Field(default_factory=list)
@@ -144,20 +166,27 @@ class Trace(BaseModel):
     document_retrieval: Optional[DocumentRetrievalTrace] = None
     sql_executions: list[SqlExecutionTrace] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
+    conflicts: list[Conflict] = Field(default_factory=list)  # cross-source disagreements
     generation: dict[str, Any] = Field(default_factory=dict)
     citation_check: Optional[CitationCheck] = None
     llm_calls: list[LLMCall] = Field(default_factory=list)
     cost: Optional["CostSummary"] = None
     timings: list[StageTiming] = Field(default_factory=list)
     mode: str = "live"                                        # live | offline-cache | mixed
+    safety_net: bool = False                  # did the document safety net supply evidence?
 
 
 class AskRequest(BaseModel):
     question: str
     developer_mode: bool = True
     # "workspace" → answer only from the user's uploaded sources (a clean, isolated
-    # workspace). "demo" → answer only from the preloaded sample data. "all" → both.
-    scope: Literal["workspace", "demo", "all"] = "workspace"
+    # workspace). "all" → also include the bundled sample corpus (used by the
+    # evaluation suites and diagnostics, not by the product UI).
+    scope: Literal["workspace", "all"] = "workspace"
+    # User-configured persona, e.g. "Act as a compliance officer". Free text — roles
+    # are never hardcoded. Shapes tone/emphasis/analysis only; it can never override
+    # grounding, invent evidence, or bypass citations (enforced in generation).
+    role_instructions: Optional[str] = None
 
 
 class AskResponse(BaseModel):
@@ -166,14 +195,6 @@ class AskResponse(BaseModel):
     insufficient: bool = False
     citations: list[Evidence] = Field(default_factory=list)
     trace: Trace
-
-
-class ExampleQuestion(BaseModel):
-    label: str
-    question: str
-    route: Route
-    why: str
-    language: str = "en"
 
 
 class SourceInfo(BaseModel):
@@ -209,6 +230,9 @@ class IngestedDocumentInfo(BaseModel):
     pages: Optional[int] = None
     ingestion_ms: float = 0.0
     error: Optional[str] = None
+    # Non-fatal quality note, e.g. "3 of 12 pages contained no extractable text
+    # (possibly scanned images)". The document still indexes; the client is warned.
+    warning: Optional[str] = None
 
 
 class IngestedDatabaseInfo(BaseModel):

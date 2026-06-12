@@ -15,9 +15,19 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-# Content tokens we extract from the query. ASCII-oriented: Hebrew/RTL queries are
-# treated as semantic (they are clause questions in this corpus), which is correct.
+# Identifier-like tokens (codes, latin names) stay ASCII — identifiers are Latin.
 _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_/.]*")
+# Content tokens are Unicode-aware so Hebrew (and any other script) words count as
+# real content. Without this, a Hebrew question containing a single Latin token looked
+# "term-dominated" and was wrongly forced into keyword mode (production incident: the
+# exact term wasn't verbatim in the text → zero evidence → "insufficient evidence").
+_UWORD = re.compile(r"\w[\w\-_/.']*", re.UNICODE)
+
+# Single-letter Hebrew prefixes (ו,ה,ב,ל,מ,ש,כ) attach to the following word, so the
+# query token "החוזה" must match "חוזה" in a document (and vice versa — the document
+# side is already covered by substring containment).
+_HE_PREFIXES = "והבלמשכ"
+_HEB_RE = re.compile(r"[֐-׿]")
 
 # A query is a "lookup" (find a file) rather than a "question" (read its contents)
 # when it carries one of these cues.
@@ -51,6 +61,21 @@ _STOP = {
     "reference", "references", "referencing", "keyword", "keywords", "named", "called",
     "titled", "including", "includes", "include", "word", "term", "string", "text",
     "mentioned", "referenced", "named", "if", "there", "some",
+    # generic time/state fillers — never distinctive enough to mark a passage
+    # on-topic (a "current valuation" question must not match "current ERP API
+    # version"); found by the insufficient-evidence battery (sprint WS7)
+    "current", "currently", "right", "now", "today", "situation",
+}
+
+# Hebrew stop / instruction words (question words, pronouns, particles, polite forms).
+_STOP_HE = {
+    "מה", "מי", "איך", "איפה", "מתי", "למה", "מדוע", "כמה", "איזה", "איזו", "אילו",
+    "האם", "הוא", "היא", "הם", "הן", "אני", "אנחנו", "אתה", "את", "אתם", "אתן",
+    "זה", "זו", "זאת", "אלה", "אלו", "יש", "אין", "היה", "הייתה", "היתה", "היו",
+    "של", "על", "עם", "אל", "מן", "בין", "עד", "כי", "אם", "או", "גם", "רק",
+    "לא", "כן", "כל", "אבל", "אז", "כך", "ככה", "עוד", "נא", "בבקשה", "תודה",
+    "לגבי", "בנוגע", "אצל", "אומר", "אומרת", "אומרים", "לי", "לנו", "שלנו", "שלי",
+    "היום", "עכשיו", "כרגע",  # generic time fillers (see English list above)
 }
 
 
@@ -126,8 +151,36 @@ def _distinctive_terms(query: str) -> list[str]:
 
 
 def _content_tokens(query: str) -> list[str]:
-    return [t for t in (w.strip("-_/.") for w in _WORD.findall(query.lower()))
-            if len(t) > 1 and t not in _STOP]
+    return [t for t in (w.strip("-_/.'") for w in _UWORD.findall(query.lower()))
+            if len(t) > 1 and t not in _STOP and t not in _STOP_HE]
+
+
+def _he_variants(term: str) -> list[str]:
+    """A Hebrew term plus its forms with up to two leading prefix letters stripped
+    ("ולחוזה" → "לחוזה" → "חוזה"), so prefix morphology doesn't defeat matching.
+    A stripped variant must keep ≥3 letters: a 2-letter fragment ("שכר" → "כר")
+    substring-matches unrelated words ("נכרת") and falsely marks off-topic passages
+    as relevant — found by the insufficient-evidence battery (sprint WS7)."""
+    out, cur = [term], term
+    for _ in range(2):
+        if len(cur) > 3 and cur[0] in _HE_PREFIXES:
+            cur = cur[1:]
+            out.append(cur)
+        else:
+            break
+    return out
+
+
+def term_in_text(term: str, text: str) -> bool:
+    """Case-insensitive containment, tolerant of Hebrew single-letter prefixes on the
+    QUERY side (the document side is covered by plain substring containment)."""
+    t = (term or "").strip().lower()
+    low = (text or "").lower()
+    if not t:
+        return False
+    if _HEB_RE.search(t):
+        return any(v in low for v in _he_variants(t))
+    return t in low
 
 
 def content_terms(query: str) -> list[str]:
@@ -135,6 +188,39 @@ def content_terms(query: str) -> list[str]:
     document safety net to check whether a recovered passage is lexically on-topic for
     the question (a deterministic relevance gate that works with or without an LLM)."""
     return _content_tokens(query)
+
+
+_COORD_SPLIT = re.compile(r"\band\b|\bas well as\b|[,;]", re.I)
+
+
+def aspect_groups(query: str) -> list[list[str]]:
+    """Split a compound question ("what penalties AND suspension clauses exist?")
+    into aspect groups of content terms. Returns [] unless the question genuinely
+    has two or more aspects, each with its own content terms.
+
+    Used by the retriever's aspect quota (Trust & Evaluation Sprint, WS5): a
+    compound question must not fill every evidence slot with its dominant aspect
+    while the other aspect's passages sit just below the cut — the client-reported
+    "partial answer" failure mode."""
+    q = query or ""
+    if _HEB_RE.search(q):
+        # Hebrew: a coordinating ו attaches to the next word ("וקנסות") — start a
+        # new part at each non-stopword token that begins with ו.
+        parts, cur = [], []
+        for tok in q.split():
+            bare = tok.strip("?,.;:!\"'״׳")
+            if (cur and bare.startswith("ו") and len(bare) > 3
+                    and bare not in _STOP_HE and bare[1:] not in _STOP_HE):
+                parts.append(" ".join(cur))
+                cur = [bare[1:]]
+            else:
+                cur.append(bare)
+        if cur:
+            parts.append(" ".join(cur))
+    else:
+        parts = _COORD_SPLIT.split(q)
+    groups = [g for g in (_content_tokens(p) for p in parts) if g]
+    return groups if len(groups) >= 2 else []
 
 
 def detect_intent(query: str) -> QueryIntent:
@@ -181,8 +267,8 @@ def is_document_lookup(query: str) -> bool:
 
 
 def text_hits(text: str, gate_terms: list[str]) -> bool:
-    """True if the chunk text literally contains any gate term (case-insensitive)."""
+    """True if the chunk text literally contains any gate term (case-insensitive,
+    Hebrew-prefix tolerant)."""
     if not gate_terms:
         return False
-    low = (text or "").lower()
-    return any(t.lower() in low for t in gate_terms)
+    return any(term_in_text(t, text) for t in gate_terms)

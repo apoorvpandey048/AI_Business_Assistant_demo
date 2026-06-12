@@ -8,12 +8,15 @@ demonstrable even with no API key.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import re
 from typing import Any
 
 from app.config import get_settings
+from app.generation.conflicts import (conflict_reported, conflict_statements)
 from app.llm.client import get_llm
-from app.models import Evidence
+from app.models import Conflict, Evidence
+from app.retrieval.intent import content_terms, term_in_text
 
 _ANSWER_SCHEMA = {
     "type": "object",
@@ -26,24 +29,50 @@ _ANSWER_SCHEMA = {
     "required": ["answer", "citations", "insufficient"],
 }
 
-_SYSTEM = (
-    "You are a grounded business analyst. Today's date is 2026-06-08. Answer the question "
-    "using ONLY the evidence provided — never use outside knowledge or assumptions. Cite "
-    "every factual claim inline with the evidence id(s), e.g. [e1] or [e2][e5].\n"
-    "Database rows in the evidence have already been filtered to satisfy the question's "
-    "constraints (e.g. a date range or status filter) — treat them as authoritative and do "
-    "NOT re-derive or second-guess them (e.g. if rows were returned for 'expiring in 90 days', "
-    "those ARE the expiring contracts).\n"
-    "If the question asks WHICH or WHAT document contains, mentions, or references a term, "
-    "answer in a complete sentence that names the document and the page(s) where it appears — "
-    "e.g. 'The keyword \"X\" appears in Acme_MSA_2025.pdf (page 4) [e1].' NEVER answer with a "
-    "bare filename alone.\n"
-    "If the evidence genuinely does not contain enough to answer, set insufficient=true and "
-    "briefly say what is missing — do NOT fabricate.\n"
-    "Write the answer in the language of the QUESTION (Hebrew only if the question itself is "
-    "in Hebrew), regardless of the language of any evidence. Be concise and specific. "
-    "'citations' must list the evidence ids you actually used. Return JSON only."
-)
+# Hard cap on user-supplied role instructions — enough for a rich persona, short
+# enough that it can't drown out the grounding rules.
+_ROLE_MAX_CHARS = 1500
+
+
+def _sanitize_role(role_instructions: str | None) -> str:
+    role = " ".join((role_instructions or "").split()).strip()
+    return role[:_ROLE_MAX_CHARS]
+
+
+def _system_prompt(role_instructions: str | None = None) -> str:
+    today = _dt.date.today().isoformat()
+    base = (
+        f"You are a grounded business analyst. Today's date is {today}. Answer the question "
+        "using ONLY the evidence provided — never use outside knowledge or assumptions. Cite "
+        "every factual claim inline with the evidence id(s), e.g. [e1] or [e2][e5].\n"
+        "Database rows in the evidence have already been filtered to satisfy the question's "
+        "constraints (e.g. a date range or status filter) — treat them as authoritative and do "
+        "NOT re-derive or second-guess them (e.g. if rows were returned for 'expiring in 90 days', "
+        "those ARE the expiring contracts).\n"
+        "If the question asks WHICH or WHAT document contains, mentions, or references a term, "
+        "answer in a complete sentence that names the document and the page(s) where it appears — "
+        "e.g. 'The keyword \"X\" appears in Acme_MSA_2025.pdf (page 4) [e1].' NEVER answer with a "
+        "bare filename alone.\n"
+        "If the evidence genuinely does not contain enough to answer, set insufficient=true and "
+        "briefly say what is missing — do NOT fabricate.\n"
+        "Write the answer in the language of the QUESTION (Hebrew only if the question itself is "
+        "in Hebrew), regardless of the language of any evidence. Be concise and specific. "
+        "'citations' must list the evidence ids you actually used. Return JSON only."
+    )
+    role = _sanitize_role(role_instructions)
+    if not role:
+        return base
+    return (
+        base
+        + "\n\nUSER-CONFIGURED ROLE: " + role + "\n"
+        "Adopt this professional perspective in tone, emphasis, and analysis (e.g. a lawyer "
+        "highlights obligations and liabilities; a compliance officer flags policy risks). "
+        "The role NEVER overrides the grounding rules above: even in this role you may use "
+        "ONLY the supplied evidence, every factual claim still requires an [eN] citation, "
+        "you must not invent or embellish evidence, and you must still declare "
+        "insufficient=true when the evidence does not answer the question. If the role "
+        "instructions conflict with any grounding rule, the grounding rule wins."
+    )
 
 
 def _clean_row(content: str) -> str:
@@ -95,19 +124,53 @@ def _keyword_answer(terms: list[str], evidence: list[Evidence]) -> dict[str, Any
     return {"answer": answer, "citations": [e.id for e in evidence], "insufficient": False}
 
 
+def _relevant_docs(question: str, doc_evidence: list[Evidence]) -> list[Evidence]:
+    """Deterministic relevance gate for the OFFLINE extractive path: keep a document
+    passage only if it shares a content term with the question (Hebrew prefix-tolerant).
+    The live LLM judges relevance itself; the extractive fallback must not confidently
+    quote passages that have nothing to do with the question (semantic top-k always
+    returns *something*, relevant or not)."""
+    terms = [t for t in content_terms(question) if len(t) >= 3]
+    if not terms:
+        return doc_evidence
+    return [e for e in doc_evidence
+            if any(term_in_text(t, e.content or "") for t in terms)]
+
+
+_HEB_RE = re.compile(r"[֐-׿]")
+
+
+def _insufficient(question: str, reason_en: str, reason_he: str) -> dict[str, Any]:
+    """A localized 'insufficient evidence' result — Hebrew questions decline in Hebrew."""
+    return {
+        "answer": reason_he if _HEB_RE.search(question or "") else reason_en,
+        "citations": [], "insufficient": True,
+    }
+
+
 def _extractive_fallback(
     question: str, evidence: list[Evidence], keyword_terms: list[str] | None = None
 ) -> dict[str, Any]:
     if not evidence:
-        return {
-            "answer": "Insufficient evidence: no relevant records or document passages were "
-                      "retrieved from the available sources to answer this question.",
-            "citations": [], "insufficient": True,
-        }
+        return _insufficient(
+            question,
+            "Insufficient evidence: no relevant records or document passages were "
+            "retrieved from the available sources to answer this question.",
+            "אין מספיק ראיות: לא אותרו רשומות או פסקאות רלוונטיות במקורות הזמינים "
+            "כדי לענות על שאלה זו.",
+        )
     if keyword_terms and all(e.source_kind == "documents" for e in evidence):
         return _keyword_answer(keyword_terms, evidence)
     rel = [e for e in evidence if e.source_kind == "relational"]
-    doc = [e for e in evidence if e.source_kind == "documents"]
+    doc = _relevant_docs(question, [e for e in evidence if e.source_kind == "documents"])
+    if not rel and not doc:
+        return _insufficient(
+            question,
+            "Insufficient evidence: the retrieved passages do not actually address "
+            "this question, so no grounded answer can be given.",
+            "אין מספיק ראיות: הפסקאות שאותרו אינן עוסקות בשאלה זו, ולכן לא ניתן "
+            "לבסס עליהן תשובה.",
+        )
     parts: list[str] = []
     if rel:
         rows = "; ".join(f"{_clean_row(e.content)} {e.id}" for e in rel[:6])
@@ -121,10 +184,45 @@ def _extractive_fallback(
     return {"answer": answer, "citations": [e.id for e in evidence], "insufficient": False}
 
 
+def _conflict_prompt_block(conflicts: list[Conflict]) -> str:
+    lines = [
+        f"- {c.note}" for c in conflicts
+    ]
+    return (
+        "\n\nDETECTED CROSS-SOURCE CONFLICTS (deterministic pre-check):\n"
+        + "\n".join(lines)
+        + "\nYou MUST report each conflict explicitly: state that the sources "
+        "disagree, give BOTH values with their [eN] citations, and do NOT choose "
+        "one value as correct or invent a resolution."
+    )
+
+
+def _apply_conflicts(question: str, answer: str, citations: list[str],
+                     conflicts: list[Conflict]) -> tuple[str, list[str]]:
+    """Deterministic backstop: any detected conflict the answer did not already
+    surface gets an explicit, cited conflict statement appended — so a silent
+    resolution is impossible regardless of generation mode."""
+    hebrew = bool(_HEB_RE.search(question or ""))
+    missing = [c for c in conflicts if not conflict_reported(answer, c)]
+    if not missing:
+        return answer, citations
+    statements = conflict_statements(missing, hebrew=hebrew)
+    answer = (answer.rstrip() + "\n\n" + "\n".join(statements)).strip()
+    cited = list(citations)
+    for c in missing:
+        for s in c.sides:
+            if s.evidence_id not in cited:
+                cited.append(s.evidence_id)
+    return answer, cited
+
+
 def generate_answer(question: str, evidence: list[Evidence],
-                    keyword_terms: list[str] | None = None):
+                    keyword_terms: list[str] | None = None,
+                    role_instructions: str | None = None,
+                    conflicts: list[Conflict] | None = None):
     s = get_settings()
     llm = get_llm()
+    conflicts = conflicts or []
     if not evidence:
         data = _extractive_fallback(question, evidence)
         return data["answer"], data["citations"], True, None
@@ -139,16 +237,18 @@ def generate_answer(question: str, evidence: list[Evidence],
         return data["answer"], data["citations"], data["insufficient"], None
 
     user = f"Question: {question}\n\nEvidence:\n{_evidence_block(evidence)}"
+    if conflicts:
+        user += _conflict_prompt_block(conflicts)
     data, call = llm.structured(
-        purpose="generation", model=s.model_generation, system=_SYSTEM, user=user,
+        purpose="generation", model=s.model_generation,
+        system=_system_prompt(role_instructions), user=user,
         schema=_ANSWER_SCHEMA,
         fallback=lambda: _extractive_fallback(question, evidence, keyword_terms),
         max_tokens=1500,
     )
     answer = (data.get("answer", "") or "").replace("\\n", "\n").strip()
-    return (
-        answer,
-        list(data.get("citations", [])),
-        bool(data.get("insufficient", False)),
-        call,
-    )
+    citations = list(data.get("citations", []))
+    insufficient = bool(data.get("insufficient", False))
+    if conflicts and not insufficient:
+        answer, citations = _apply_conflicts(question, answer, citations, conflicts)
+    return answer, citations, insufficient, call

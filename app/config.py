@@ -1,11 +1,13 @@
 """Central configuration. Everything is env-driven (prefix ``ABA_``) with safe defaults.
 
-The only secret that matters is ``ANTHROPIC_API_KEY``. Without it the app runs in
-offline mode using deterministic cached answers for the scripted demo questions.
+The only secret that matters is the model API key (``ANTHROPIC_API_KEY`` or an
+OpenAI-compatible key). Without one the app runs in offline mode using deterministic
+fallbacks for routing, SQL generation, and answer extraction.
 """
 from __future__ import annotations
 
 import os
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 
@@ -45,6 +47,10 @@ class Settings(BaseSettings):
     # Makes repeated/warmed questions instant (great for demos). New questions still
     # go live. Set false to always call the model.
     cache_first: bool = True
+    # Persist live LLM responses to the replay cache. Evaluation harnesses set this
+    # false so a live eval run can never mutate the demo replay state (a failing
+    # live answer must not be replayed as the offline behavior afterwards).
+    llm_cache_write: bool = True
 
     # --- Embeddings --------------------------------------------------------
     # backend: "auto" (OpenAI embeddings when provider=openai on api.openai.com,
@@ -64,7 +70,10 @@ class Settings(BaseSettings):
     dense_top_k: int = 20
     bm25_top_k: int = 20
     rrf_k: int = 60
-    final_k: int = 5
+    # 7 (not 5): multi-aspect questions ("suspension AND penalties") need the
+    # second aspect's chunk to survive the cut when no cross-encoder reranker is
+    # installed; the semantic relevance gate still trims weak tails below this.
+    final_k: int = 7
     rerank_top_n: int = 20
     # Semantic relevance gate: keep passages within `keep_ratio` of the top fusion score
     # (drops the clearly-weaker tail) but never return fewer than `min_keep` for a real
@@ -76,6 +85,12 @@ class Settings(BaseSettings):
     # --- SQL safety --------------------------------------------------------
     sql_row_limit: int = 200
     sql_timeout_seconds: int = 5
+
+    # --- Time anchor -------------------------------------------------------
+    # "Today" as seen by SQL generation (date-window questions like "expiring in the
+    # next 90 days"). Empty → the real current date. Tests and the evaluation suites
+    # pin this to the seed-data anchor (2026-06-08) for deterministic results.
+    reference_date: str = ""
 
     # --- Paths -------------------------------------------------------------
     data_dir: str = "data"
@@ -97,6 +112,10 @@ class Settings(BaseSettings):
     @property
     def cache_dir(self) -> Path:
         return self.data_path / "cache"
+
+    @property
+    def today(self) -> str:
+        return self.reference_date.strip() or date.today().isoformat()
 
     @property
     def anthropic_key(self) -> str:

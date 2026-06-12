@@ -1,0 +1,15 @@
+{"id": "en-ma-penalty-suspension", "lang": "en", "question": "What penalties and service suspension terms do the contracts define?", "aspects": [["penalt"], ["suspend", "suspension"]]}
+{"id": "en-ma-risks-mitigations", "lang": "en", "question": "What risks and mitigation plans are listed in the project briefs?", "aspects": [["risk"], ["mitigat"]]}
+{"id": "en-ma-overdue-suspension", "lang": "en", "question": "Which customers have overdue invoices, and what do their agreements say about service suspension?", "aspects": [["overdue", "due_date", "inv-"], ["suspend", "suspension"]], "note": "aspect 1 counts the overdue rows themselves (due_date/invoice refs) — the offline replay cache serves a thin column set without the literal word 'overdue'"}
+{"id": "en-ma-term-renewal", "lang": "en", "question": "What are the contract term length and the renewal notice period?", "aspects": [["twenty-four", "24"], ["sixty", "60"]]}
+{"id": "en-ma-uptime-response", "lang": "en", "question": "What uptime and response times does SLA-2025 require?", "aspects": [["99.5"], ["four", "4 hour", "4-hour", "4)"]]}
+{"id": "en-ma-payment-latefee", "lang": "en", "question": "What are the payment terms and the late payment fee in the Acme agreement?", "aspects": [["thirty", "30"], ["1.5"]]}
+{"id": "en-ma-expire-penalties", "lang": "en", "question": "What contracts expire in the next 90 days, and what penalties do they define?", "aspects": [["end_date", "expir", "2026-"], ["penalt"]]}
+{"id": "en-ma-scope-in-out", "lang": "en", "question": "What is in scope and what is out of scope for Project Atlas?", "aspects": [["migration", "training", "hypercare", "discovery"], ["out of scope", "hardware", "licens"]]}
+{"id": "en-ma-projects-risks", "lang": "en", "question": "Show all active projects and summarize the risks in their documentation.", "aspects": [["atlas", "orion", "nova"], ["risk"]]}
+{"id": "en-ma-suspend-restore", "lang": "en", "question": "After how many days of non-payment can Acme's service be suspended, and how quickly is it restored after payment?", "aspects": [["30", "thirty"], ["two", "2)"]]}
+{"id": "en-ma-overdue-amounts", "lang": "en", "question": "Which invoices are overdue and what are their amounts?", "aspects": [["inv-", "overdue"], ["42000", "42,000", "amount"]]}
+{"id": "he-ma-suspension-penalties", "lang": "he", "question": "מה אומר ההסכם של תבור מערכות על השעיית שירות וקנסות?", "aspects": [["השע"], ["קנס"]]}
+{"id": "he-ma-sla-payment", "lang": "he", "question": "מה רמת השירות לפי SLA-2025 ותוך כמה ימים יש לשלם חשבונית לפי ההסכם של תבור?", "aspects": [["99.5"], ["שלושים", "30"]]}
+{"id": "en-ma-confidentiality-data", "lang": "en", "question": "What do the contracts require for confidentiality and for personal data processing?", "aspects": [["confidential"], ["data processing", "personal data"]]}
+{"id": "en-ma-orion-budget-resourcing", "lang": "en", "question": "What budget and resourcing risks does Project Orion face?", "aspects": [["12%", "budget"], ["50%", "engineer", "resourc"]]}

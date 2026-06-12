@@ -70,8 +70,8 @@ _SYSTEM = (
 # PDF and NONE *definitions* were broadened; the SQL/HYBRID definitions and the entire
 # agentic sub-query paragraph below are preserved verbatim, because empirically even small
 # wording changes to the sub-query guidance perturb the agentic HYBRID flow and once
-# regressed a flagship demo (penalty clauses ev 9→4). This redesign was A/B-validated live
-# against the full demo suite (scripts/eval.py) — the flagship HYBRID stays at ev=9. The
+# regressed a flagship hybrid question (penalty clauses ev 9→4). This redesign was A/B-validated live
+# against the full regression suite (scripts/eval.py) — the flagship HYBRID stays at ev=9. The
 # deterministic document safety net remains as defence-in-depth. See docs/fix-design.md.
 
 # --- deterministic rule layer (also the offline fallback) -------------------

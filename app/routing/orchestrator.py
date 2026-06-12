@@ -5,25 +5,29 @@ orchestration engine actually lives.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Optional
 
+from app.generation.conflicts import detect_conflicts
 from app.generation.generate import generate_answer
 from app.generation.verify import verify_citations
 from app.models import (AskResponse, Evidence, LLMCall, RouteDecision, StageTiming,
                         Trace)
 from app.pricing import summarize
-from app.retrieval.intent import content_terms, is_document_lookup
+from app.retrieval.intent import content_terms, is_document_lookup, term_in_text
 from app.routing.classify import classify
 from app.sources.base import router_capability_brief
 from app.sources.document_source import DocumentSource
-from app.sources.relational_source import RelationalSource
+from app.sources.structured_source import StructuredSource
 
 logger = logging.getLogger("aba.orchestrator")
 
+_HEB_CHARS = re.compile(r"[֐-׿]")
+
 
 class Orchestrator:
-    def __init__(self, documents: DocumentSource, relational: RelationalSource) -> None:
+    def __init__(self, documents: DocumentSource, relational: StructuredSource) -> None:
         self.documents = documents
         self.relational = relational
         self.capability_brief = router_capability_brief(
@@ -32,7 +36,8 @@ class Orchestrator:
 
     # ----------------------------------------------------------------------
     def ask(self, question: str, allowed_docs: Optional[list[str]] = None,
-            allowed_tables: Optional[list[str]] = None) -> AskResponse:
+            allowed_tables: Optional[list[str]] = None,
+            role_instructions: Optional[str] = None) -> AskResponse:
         t0 = time.perf_counter()
         trace = Trace(question=question)
         evidence: list[Evidence] = []
@@ -59,7 +64,8 @@ class Orchestrator:
 
         elif decision.route == "PDF":
             evidence += self._doc_branch(
-                trace, decision.document_subquery or question, decision.languages, allowed_docs
+                trace, question, decision.languages, allowed_docs,
+                rewrite=decision.document_subquery,
             )
 
         elif decision.route == "HYBRID":
@@ -87,11 +93,37 @@ class Orchestrator:
             if sn_ev:
                 evidence += sn_ev
                 safety_net_fired = True
+        trace.safety_net = safety_net_fired
+
+        # 2c) CROSS-SOURCE CONFLICT CHECK ------------------------------------
+        # "What if the PDF and the database disagree?" — never answer from one
+        # source while another in-scope source contradicts it. SQL and HYBRID
+        # answers get a cheap document corroboration probe (no LLM call) over ALL
+        # in-scope documents; passages that CONFLICT with the existing evidence are
+        # adopted so the answer can report the disagreement with citations. HYBRID
+        # needs this too: its agentic step filters documents to the DB-linked
+        # contracts, which is exactly how a contradicting amendment stays unseen.
+        # On clean data nothing is adopted and behavior is unchanged.
+        # See docs/conflict-resolution.md.
+        if decision.route in ("SQL", "HYBRID") and evidence:
+            evidence += self._conflict_probe(trace, question, decision, evidence,
+                                             allowed_docs)
 
         # 3) Re-label evidence e1..eN (single source of truth for citations)
         for i, e in enumerate(evidence, start=1):
             e.id = f"e{i}"
         trace.evidence = evidence
+
+        # 3b) Detect conflicts on the FINAL evidence set (ids are now stable) so the
+        # trace and the answer can report them. Detection is deterministic and must
+        # stay silent on the clean sample corpus (regression-gated).
+        conflicts = detect_conflicts(evidence)
+        trace.conflicts = conflicts
+        if conflicts:
+            trace.notes.append(
+                "Conflict detection — the sources disagree and the answer reports it "
+                "(no silent resolution): " + "; ".join(c.note for c in conflicts)
+            )
 
         # 4) GENERATE (grounded) + VERIFY
         ts = time.perf_counter()
@@ -109,12 +141,14 @@ class Orchestrator:
                 and is_document_lookup(question)):
             kw_terms = dr.search_terms
         answer, cited, insufficient, gen_call = generate_answer(
-            question, evidence, keyword_terms=kw_terms
+            question, evidence, keyword_terms=kw_terms,
+            role_instructions=role_instructions, conflicts=conflicts,
         )
         if not evidence:
             # Nothing was retrieved — give an honest, specific account of what was
-            # searched and why no answer could be grounded (never fabricate).
-            answer = self._no_evidence_answer(decision, trace)
+            # searched and why no answer could be grounded (never fabricate). The
+            # message is written in the question's language (Hebrew gets Hebrew).
+            answer = self._no_evidence_answer(decision, trace, question)
             insufficient = True
         if gen_call:
             calls.append(gen_call)
@@ -125,6 +159,7 @@ class Orchestrator:
                       else "extractive-fallback"),
             "grounded": True,
             "insufficient": insufficient,
+            "role_applied": bool(role_instructions),
         }
 
         check = verify_citations(answer, cited, evidence)
@@ -142,20 +177,30 @@ class Orchestrator:
         trace.mode = _mode(calls)
         trace.timings.append(StageTiming(name="total", duration_ms=_ms(t0)))
 
+        # Citations = ONLY the evidence the answer verifiably cited. There is no
+        # "fall back to everything retrieved" — showing un-cited evidence as a source
+        # is exactly the untrustworthy-evidence-panel bug reported by the client.
         cited_set = set(check.cited_ids)
-        citations = [e for e in evidence if e.id in cited_set] or (
-            evidence if not insufficient else []
-        )
+        citations = [e for e in evidence if e.id in cited_set]
+        if not citations and evidence and not insufficient:
+            trace.notes.append(
+                "The answer cited no specific evidence ids; the sources panel is left "
+                "empty (the full retrieved set remains visible in the Inspector)."
+            )
         return AskResponse(
             question=question, answer=answer, insufficient=insufficient,
             citations=citations, trace=trace,
         )
 
-    def _no_evidence_answer(self, decision: RouteDecision, trace: Trace) -> str:
+    def _no_evidence_answer(self, decision: RouteDecision, trace: Trace,
+                            question: str = "") -> str:
         """An honest, specific 'insufficient evidence' message: what was searched and why
-        nothing could be grounded. Never fabricates an answer."""
+        nothing could be grounded. Never fabricates an answer. Written in the question's
+        language — a Hebrew question gets a Hebrew decline, not an English wall of text."""
         n_docs = len(self.documents.documents)
         n_tables = len(self.relational.schema.tables)
+        hebrew = "he" in (decision.languages or []) or bool(_HEB_CHARS.search(question))
+
         searched: list[str] = []
         if decision.route in ("PDF", "HYBRID"):
             searched.append(f"{n_docs} document(s)")
@@ -164,6 +209,17 @@ class Orchestrator:
         where = " and ".join(searched) if searched else "the connected sources"
 
         dr = trace.document_retrieval
+        if hebrew:
+            if dr and dr.intent == "keyword" and dr.search_terms:
+                terms = ", ".join(f'"{t}"' for t in dr.search_terms)
+                return (f"אין מספיק ראיות: אף מסמך בסביבת העבודה אינו מכיל את {terms}. "
+                        f"חיפשנו בטקסט המלא של {n_docs} המסמכים ולא נמצאה פסקה תואמת.")
+            if decision.route == "SQL":
+                return ("אין מספיק ראיות: שאילתת מסד הנתונים לא החזירה רשומות התואמות "
+                        "לשאלה זו.")
+            return (f"אין מספיק ראיות: חיפשנו ב-{n_docs} המסמכים וב-{n_tables} טבלאות "
+                    "מסד הנתונים שהועלו, ולא נמצאו רשומות או פסקאות רלוונטיות מספיק "
+                    "כדי לבסס תשובה.")
         if dr and dr.intent == "keyword" and dr.search_terms:
             terms = ", ".join(f'"{t}"' for t in dr.search_terms)
             return (f"Insufficient evidence: no document in the workspace contains {terms}. "
@@ -231,9 +287,52 @@ class Orchestrator:
                     len(ev), decision.route, question)
         return ev
 
+    # -- cross-source conflict probe -----------------------------------------
+    def _conflict_probe(self, trace: Trace, question: str, decision: RouteDecision,
+                        evidence: list[Evidence],
+                        allowed_docs: Optional[list[str]]) -> list[Evidence]:
+        """A SQL answer is only trustworthy if no in-scope document contradicts it.
+        Run a plain document search on the original question and adopt ONLY the
+        passages that the conflict detector says disagree with the SQL rows. No
+        conflict → nothing is adopted → identical behavior to before this check."""
+        if allowed_docs is not None and len(allowed_docs) == 0:
+            return []
+        filters: dict = {}
+        if decision.languages:
+            filters["languages"] = decision.languages
+        if allowed_docs:
+            filters["documents"] = allowed_docs
+        probe_ev, probe_trace = self.documents.retrieve(question, filters=filters)
+        if not probe_ev:
+            return []
+        conflicts = detect_conflicts(evidence + probe_ev)
+        if not conflicts:
+            return []
+        existing_ids = {e.id for e in evidence}
+        adopt: list[Evidence] = []
+        for c in conflicts:
+            side_ids = {s.evidence_id for s in c.sides}
+            if not (side_ids & existing_ids):
+                continue                       # conflict among probe passages only
+            for e in probe_ev:
+                if e.id in side_ids and e.id not in existing_ids and e not in adopt:
+                    adopt.append(e)            # never re-adopt an already-present chunk
+        if adopt:
+            if trace.document_retrieval is None:   # keep the HYBRID step-3 trace visible
+                trace.document_retrieval = probe_trace
+            trace.notes.append(
+                f"Cross-source conflict check — the database result disagrees with "
+                f"{len(adopt)} document passage(s); adopting them as evidence and "
+                f"reporting the conflict instead of silently preferring one source."
+            )
+            logger.info("conflict probe adopted %d passage(s) for question=%r",
+                        len(adopt), question)
+        return adopt
+
     # -- branches ----------------------------------------------------------
     def _doc_branch(self, trace: Trace, query: str, languages: list[str] | None = None,
-                    allowed_docs: Optional[list[str]] = None) -> list[Evidence]:
+                    allowed_docs: Optional[list[str]] = None,
+                    rewrite: Optional[str] = None) -> list[Evidence]:
         if allowed_docs is not None and len(allowed_docs) == 0:
             trace.notes.append("No documents in scope — skipping document retrieval.")
             return []
@@ -242,7 +341,12 @@ class Orchestrator:
             filters["languages"] = languages
         if allowed_docs:
             filters["documents"] = allowed_docs
-        ev, dtrace = self.documents.retrieve(query, filters=filters)
+        # The user's question is the PRIMARY search; the router's rewritten sub-query
+        # joins the fusion as an auxiliary phrasing. A rewrite ("look for the recipient
+        # of the proposal in the documents") adds recall but can never out-vote or
+        # crowd out the question itself (question-anchor guarantee in the retriever).
+        extra = [rewrite] if rewrite and rewrite.strip() != query.strip() else None
+        ev, dtrace = self.documents.retrieve(query, filters=filters, extra_queries=extra)
         trace.document_retrieval = dtrace
         trace.notes.append(
             f"Document retrieval ({dtrace.embedding_backend} + BM25 → RRF → "
@@ -337,8 +441,12 @@ class Orchestrator:
         if decision.languages:
             doc_filter["languages"] = decision.languages
 
-        doc_q = decision.document_subquery or question
-        doc_ev, dtrace = self.documents.retrieve(doc_q, filters=doc_filter)
+        # primary = the user's question; the router's focused sub-query joins the
+        # fusion as an auxiliary phrasing (same rationale as _doc_branch)
+        sub = decision.document_subquery
+        extra = [sub] if sub and sub.strip() != question.strip() else None
+        doc_ev, dtrace = self.documents.retrieve(question, filters=doc_filter,
+                                                 extra_queries=extra)
         trace.document_retrieval = dtrace
         # Stamp the owning entity onto each passage so the model can't misattribute a
         # generic clause (e.g. "Provider may suspend…") to the wrong customer.
@@ -358,15 +466,20 @@ class Orchestrator:
 
 
 def _on_topic(question: str, evidence: list[Evidence]) -> bool:
-    """Deterministic relevance gate for the safety net: the top recovered passage must
+    """Deterministic relevance gate for the safety net: a top recovered passage must
     share at least one content word (non-stopword token) with the question. Keeps the
     'honest grounding' guarantee — genuinely out-of-scope questions whose corpus has no
-    lexical overlap are still declined, even offline with no LLM to judge relevance."""
-    terms = set(content_terms(question))
+    lexical overlap are still declined, even offline with no LLM to judge relevance.
+    Checks the top 3 passages (not just #1) and matches Hebrew tokens prefix-tolerantly
+    (ה/ו/ב/ל/מ/ש/כ), so multilingual recoveries aren't wrongly discarded."""
+    terms = content_terms(question)
     if not terms:
         return True                            # nothing distinctive to gate on; trust generation
-    top = (evidence[0].content or "").lower()
-    return any(t in top for t in terms)
+    for e in evidence[:3]:
+        text = e.content or ""
+        if any(term_in_text(t, text) for t in terms):
+            return True
+    return False
 
 
 def _documents_from_rows(rows: list[dict]) -> list[str]:

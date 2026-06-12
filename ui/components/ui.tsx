@@ -6,9 +6,28 @@ export function cn(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(" ");
 }
 
-export function isRTL(text: string | null | undefined): boolean {
-  return !!text && /[֐-׿]/.test(text);
+/* ---------------- text direction ---------------- */
+// Dominant-script direction. "Any Hebrew char anywhere" is wrong for mixed content —
+// an English answer that quotes one Hebrew word must NOT flip to RTL (and vice versa).
+// We count strong-RTL vs strong-LTR characters and let the majority decide.
+const RTL_CHARS = /[֐-׿؀-ۿ܀-ݏיִ-ﭏ]/g;
+const LTR_CHARS = /[A-Za-z]/g;
+
+export function textDir(text: string | null | undefined): "rtl" | "ltr" {
+  if (!text) return "ltr";
+  const rtl = (text.match(RTL_CHARS) || []).length;
+  const ltr = (text.match(LTR_CHARS) || []).length;
+  return rtl > ltr ? "rtl" : "ltr";
 }
+
+export function isRTL(text: string | null | undefined): boolean {
+  return textDir(text) === "rtl";
+}
+
+// For mixed-direction bodies (Hebrew + English + numbers + [eN] citations): with
+// unicode-bidi:plaintext each paragraph resolves its own direction from its first
+// strong character, which renders mixed answers correctly regardless of the dir attr.
+export const bidiPlaintext: React.CSSProperties = { unicodeBidi: "plaintext" };
 
 /* ---------------- icons (inline, stroke) ---------------- */
 type IconProps = { className?: string };
@@ -41,7 +60,8 @@ export const Icons = {
   x: (p: IconProps) => <S {...p}><path d="M18 6 6 18M6 6l12 12" /></S>,
   inspect: (p: IconProps) => <S {...p}><circle cx="11" cy="11" r="7" /><path d="m20 20-3-3" /><path d="M11 8v6M8 11h6" /></S>,
   grid: (p: IconProps) => <S {...p}><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></S>,
-  play: (p: IconProps) => <S {...p}><path d="M7 5v14l11-7L7 5Z" /></S>,
+  chat: (p: IconProps) => <S {...p}><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-2.9-.4-4.1-1L3 20l1-5.4A8.5 8.5 0 1 1 21 11.5Z" /></S>,
+  gear: (p: IconProps) => <S {...p}><circle cx="12" cy="12" r="3.2" /><path d="M19.4 13.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.2a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.9-2.9l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1h-.2a2 2 0 1 1 0-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.9-2.9l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5v-.2a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.9 2.9l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.5 1Z" /></S>,
 };
 
 /* ---------------- route badge ---------------- */

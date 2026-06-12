@@ -127,6 +127,8 @@ class EmbeddingModel:
         self.impl = impl or _HashingEmbedder()
         self.backend = self.impl.backend
         self._query_cache: dict[str, np.ndarray] = {}
+        self._healthy = False        # has the configured backend succeeded this session?
+        self._last_degraded = False  # did the most recent embed() degrade transiently?
 
     @classmethod
     def get(cls) -> "EmbeddingModel":
@@ -137,21 +139,37 @@ class EmbeddingModel:
     def embed(self, texts: list[str]) -> np.ndarray:
         if not texts:
             return np.zeros((0, 1), dtype=np.float32)
+        self._last_degraded = False
         try:
-            return self.impl.encode(texts)
+            out = self.impl.encode(texts)
+            self._healthy = True
+            return out
         except Exception:
-            # configured backend failed at runtime (e.g. rotated key / network) —
-            # degrade to the always-available deterministic hashing backend.
-            if not isinstance(self.impl, _HashingEmbedder):
-                self.impl = _HashingEmbedder()
-                self.backend = self.impl.backend
-                return self.impl.encode(texts)
-            raise
+            self._last_degraded = True
+            if isinstance(self.impl, _HashingEmbedder):
+                raise
+            if self._healthy:
+                # TRANSIENT failure of a backend that already worked this session
+                # (rate limit, network blip). Do NOT permanently downgrade: the
+                # built index has this backend's dimensions, and a permanent swap
+                # would poison every later query with incompatible vectors (found
+                # by the Trust & Evaluation Sprint harness). Serve THIS call from
+                # hashing — the vector store's dimension guard turns it into a
+                # BM25-only query — and let the next call retry the real backend.
+                return _HashingEmbedder().encode(texts)
+            # the backend never worked this session (bad key, no network at startup):
+            # degrade permanently so the index and all queries use hashing consistently.
+            self.impl = _HashingEmbedder()
+            self.backend = self.impl.backend
+            return self.impl.encode(texts)
 
     def embed_one(self, text: str) -> np.ndarray:
         # memoize query embeddings so repeated/clicked questions don't re-embed
         v = self._query_cache.get(text)
         if v is None:
             v = self.embed([text])[0]
-            self._query_cache[text] = v
+            if not getattr(self, "_last_degraded", False):
+                # never memoize a vector produced by a transient degradation —
+                # the next ask of the same question should retry the real backend
+                self._query_cache[text] = v
         return v

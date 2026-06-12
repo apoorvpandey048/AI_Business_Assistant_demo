@@ -18,54 +18,18 @@ from app.config import get_settings
 from app.ingestion.pdf import ingest_pdf, ingest_pdf_dir
 from app.ingestion.sqlite_introspect import SchemaInfo, introspect
 from app.ingestion.sqlite_register import copy_seed, merge_sqlite
-from app.models import (ExampleQuestion, IngestedDatabaseInfo, IngestedDocumentInfo,
+from app.models import (IngestedDatabaseInfo, IngestedDocumentInfo,
                         Inventory, SourceInfo, TableInfo)
 from app.retrieval.document_retriever import DocumentIndex
 from app.routing.orchestrator import Orchestrator
 from app.sources.crm_source import CrmSource
 from app.sources.document_source import DocumentSource
-from app.sources.relational_source import RelationalSource
-
-EXAMPLES = [
-    ExampleQuestion(
-        label="Pure SQL", route="SQL", language="en",
-        question="What is the total outstanding invoice amount per customer?",
-        why="Aggregation over the database; clean generated SQL with table/row citations."),
-    ExampleQuestion(
-        label="Pure document", route="PDF", language="en",
-        question="What do our contracts say about service suspension?",
-        why="Hybrid retrieval (dense + BM25) over the PDFs with page-level citations."),
-    ExampleQuestion(
-        label="Keyword beats vector", route="PDF", language="en",
-        question="Which contract clauses mention SLA-2025?",
-        why="BM25 finds the exact identifier 'SLA-2025' that pure embeddings miss."),
-    ExampleQuestion(
-        label="Hybrid (agentic)", route="HYBRID", language="en",
-        question="Which customers have overdue invoices, and what do their agreements say about service suspension?",
-        why="SQL finds overdue customers → those customers' contracts are retrieved → grounded combined answer. The flagship."),
-    ExampleQuestion(
-        label="Hybrid (date + clause)", route="HYBRID", language="en",
-        question="What contracts expire in the next 90 days, and what penalties do they define?",
-        why="Date filter in SQL + penalty clauses from the documents — impossible with vector search alone."),
-    ExampleQuestion(
-        label="Hybrid (projects + risks)", route="HYBRID", language="en",
-        question="Show all active projects and summarize the risks in their documentation.",
-        why="SQL lists active projects; project briefs supply the risk narrative, grouped per project."),
-    ExampleQuestion(
-        label="Hebrew", route="PDF", language="he",
-        question="מה אומר ההסכם של תבור מערכות על השעיית שירות וקנסות?",
-        why="Bilingual retrieval over a Hebrew contract with right-to-left citations."),
-    ExampleQuestion(
-        label="Honest grounding", route="NONE", language="en",
-        question="What is our employee headcount in Berlin?",
-        why="No source can answer → the system says 'insufficient evidence' instead of guessing."),
-]
+from app.sources.structured_source import StructuredSource
 
 
 class Engine:
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.examples = EXAMPLES
         self._lock = threading.RLock()
         self._build_from_seed()
 
@@ -86,7 +50,7 @@ class Engine:
         self._working_db_path: Path | None = None
         schema = introspect(s.db_path)
         self._seed_table_names: set[str] = set(schema.table_names())
-        self.relational_source = RelationalSource(s.db_path, schema)
+        self.relational_source = StructuredSource(s.db_path, schema)
 
         # per-source inventory (sample data is pre-loaded)
         self._documents: list[IngestedDocumentInfo] = [
@@ -132,8 +96,9 @@ class Engine:
                 info = IngestedDocumentInfo(
                     name=doc.document, origin="uploaded", status="indexed",
                     chunks_indexed=added, languages=langs,
-                    pages=max((c.page for c in doc.chunks), default=0),
+                    pages=doc.total_pages or max((c.page for c in doc.chunks), default=0),
                     ingestion_ms=round((time.perf_counter() - t0) * 1000, 1),
+                    warning=_page_warning(doc),
                 )
             except Exception as exc:  # never let a bad upload take down the engine
                 info = IngestedDocumentInfo(
@@ -165,7 +130,7 @@ class Engine:
                         "No tables found in this SQLite database — nothing to register."
                     )
                 schema = introspect(self._working_db_path)
-                self.relational_source = RelationalSource(self._working_db_path, schema)
+                self.relational_source = StructuredSource(self._working_db_path, schema)
                 self._rebuild_orchestrator()
 
                 cols_by_table = {t.name: [c.name for c in t.columns] for t in schema.tables}
@@ -222,13 +187,15 @@ class Engine:
             CrmSource().describe(),
         ]
 
-    def ask(self, question: str, scope: str = "all"):
+    def ask(self, question: str, scope: str = "all",
+            role_instructions: str | None = None):
         with self._lock:
             allowed_docs, allowed_tables = self._scope_sources(scope)
             if scope == "workspace" and not allowed_docs and not allowed_tables:
                 return self._empty_workspace_response(question)
             resp = self.orchestrator.ask(
-                question, allowed_docs=allowed_docs, allowed_tables=allowed_tables
+                question, allowed_docs=allowed_docs, allowed_tables=allowed_tables,
+                role_instructions=role_instructions,
             )
             self._stamp_origin(resp.trace.evidence)
             return resp
@@ -247,9 +214,8 @@ class Engine:
 
     def _empty_workspace_response(self, question: str):
         from app.models import AskResponse, RouteDecision, Trace
-        msg = ("Your workspace is empty. Upload a PDF or SQLite database on the left to ask "
-               "questions about your own data. (Open the Demo tab to see the assistant working "
-               "on sample contracts and a business database.)")
+        msg = ("Your workspace is empty. Add a PDF or SQLite database under Sources to ask "
+               "questions about your own data.")
         return AskResponse(
             question=question, answer=msg, insufficient=True, citations=[],
             trace=Trace(
@@ -270,7 +236,7 @@ class Engine:
 
     def _stamp_origin(self, evidence) -> None:
         """Tag every evidence item with its provenance (sample vs uploaded) so the client
-        is never left wondering whether an answer came from their upload or our demo data.
+        is never left wondering whether an answer came from their upload or bundled data.
         (trace.evidence and citations reference the same objects, so this covers both.)"""
         doc_origin = {d.name: d.origin for d in self._documents}
         tbl_origin = self._table_origin()
@@ -283,12 +249,22 @@ class Engine:
 
 # -- inventory helpers -------------------------------------------------------
 
+def _page_warning(doc) -> str | None:
+    """A non-fatal quality note when some pages yielded no text (likely scanned)."""
+    if not doc.empty_pages or not doc.total_pages:
+        return None
+    return (f"{len(doc.empty_pages)} of {doc.total_pages} page(s) contained no "
+            f"extractable text (possibly scanned images — OCR is not enabled). "
+            f"Content on those pages will not be searchable.")
+
+
 def _doc_info_from_ingested(doc, origin: str) -> IngestedDocumentInfo:
     langs = sorted({c.language for c in doc.chunks}) or [doc.language]
     return IngestedDocumentInfo(
         name=doc.document, origin=origin, status="indexed",
         chunks_indexed=len(doc.chunks), languages=langs,
-        pages=max((c.page for c in doc.chunks), default=0),
+        pages=doc.total_pages or max((c.page for c in doc.chunks), default=0),
+        warning=_page_warning(doc),
     )
 
 

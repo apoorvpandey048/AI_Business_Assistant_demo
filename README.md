@@ -19,7 +19,7 @@ without touching the pipeline.
 
 ---
 
-## The distinction this demo makes visible
+## The distinction this product makes visible
 
 | ❌ A PDF chatbot | ✅ This engine |
 |---|---|
@@ -72,10 +72,11 @@ flowchart TD
     VER --> OUT["Answer + citations + full trace"]
 ```
 
-**Extensibility:** every source implements one `Source` interface (`describe()` +
-`retrieve()`). The repo ships a stubbed `CrmSource` (marked *future*) to make the point
-concrete — adding CRM/email/cloud storage is a new implementation, **not** a pipeline
-rewrite. See [docs/architecture.md](docs/architecture.md).
+**Extensibility:** every source subclasses one `BaseSource` interface
+(`DocumentSource` for unstructured text, `StructuredSource` for tabular data), and
+external systems plug in through connector adapters (`app/sources/connectors/`).
+Adding Salesforce/HubSpot/Gmail/Drive is an extractor, **not** a pipeline rewrite.
+See [docs/architecture.md](docs/architecture.md) and [docs/connectors.md](docs/connectors.md).
 
 ---
 
@@ -103,7 +104,7 @@ so they never need a key.
 # 1) backend
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-python scripts/seed_data.py && python scripts/make_pdfs.py   # build demo corpus + DB
+python scripts/seed_data.py && python scripts/make_pdfs.py   # build the evaluation corpus + DB
 uvicorn app.main:app --reload --port 8000
 
 # 2) frontend
@@ -114,7 +115,7 @@ cd ui && npm install && NEXT_PUBLIC_API_BASE=http://localhost:8000 npm run dev
 
 ---
 
-## Try these (preloaded in the UI)
+## Regression questions (the evaluation gate)
 
 | # | Question | Route | What it proves |
 |---|---|---|---|
@@ -127,7 +128,11 @@ cd ui && npm install && NEXT_PUBLIC_API_BASE=http://localhost:8000 npm run dev
 | 7 | מה אומר ההסכם של תבור מערכות על השעיית שירות וקנסות? | **PDF** | Bilingual retrieval over a Hebrew contract (RTL) |
 | 8 | What is our employee headcount in Berlin? | **NONE** | Honest "insufficient evidence" |
 
-Run them all: `make eval` (works offline; checks route, evidence, and citation verification).
+These run against the bundled evaluation corpus (`data/pdfs` + `data/business.db`),
+which exists for testing — the product UI answers only from sources you upload.
+Run them all: `make eval` (works offline; checks route, evidence, and citation
+verification). `scripts/eval_qa.py` adds 12 labelled document-QA cases with
+per-layer failure attribution.
 
 ---
 
@@ -158,10 +163,10 @@ Click any citation in the UI to jump to and highlight the exact evidence.
 | Fusion / rerank | **RRF** + optional **cross-encoder** | Robust, and easy to *show* in the inspector. |
 | SQL safety | **sqlglot** AST validation, read-only, LIMIT, timeout | The model never touches the DB; SELECT-only, allow-listed tables. |
 | UI | **FastAPI + Next.js** | API-first engine; a polished, inspector-first frontend. |
-| Offline mode | deterministic fallbacks + response cache | The demo never breaks on a missing key or network. |
+| Offline mode | deterministic fallbacks + response cache | The engine never breaks on a missing key or network. |
 
 **Cost:** ~**$0.02–0.03 per question** with Opus answers (~$0.01 with Sonnet). Embeddings
-are local → **$0**. The full 8-question demo ≈ **$0.20**. A single pay-as-you-go API key is
+are local → **$0**. The full 8-question eval ≈ **$0.20**. A single pay-as-you-go API key is
 all that's needed — no Claude Max subscription (that powers Claude.ai/Code, not this API).
 
 **LLM provider is swappable (incl. free options).** The engine is provider-agnostic. Set
@@ -175,7 +180,7 @@ all that's needed — no Claude Max subscription (that powers Claude.ai/Code, no
 | OpenAI | paid | `https://api.openai.com/v1` | `gpt-4o` |
 | Anthropic (default) | paid | — | `claude-opus-4-8` |
 
-See `.env.example` for copy-paste configs. With **no key at all**, the demo runs in
+See `.env.example` for copy-paste configs. With **no key at all**, the engine runs in
 deterministic **offline mode** ($0) — the routing/retrieval/traceability inspector is
 identical; only the final answer wording is extractive instead of model prose.
 
@@ -185,19 +190,22 @@ identical; only the final answer wording is extractive instead of model prose.
 
 ```
 app/
-  api/            FastAPI routes (/ask, /trace, /examples, /sources, /config, /health)
-  ingestion/      pdf.py (extract + RTL-normalize + section-aware chunk), sqlite_introspect.py
-  retrieval/      vector_store.py (numpy + qdrant), bm25.py, fusion.py, rerank.py, document_retriever.py
+  api/            FastAPI routes (/ask, /ingest/*, /inventory, /sources, /config, /health, /reset)
+  ingestion/      pdf.py (extract + RTL-normalize + section-aware chunk), sqlite_introspect.py, sqlite_register.py
+  retrieval/      vector_store.py (numpy + qdrant), bm25.py, fusion.py, rerank.py, document_retriever.py, intent.py
   sql/            generate.py, validate.py (sqlglot), execute.py (read-only)
-  sources/        base.py (Source interface), document_source.py, relational_source.py, crm_source.py (future)
-  routing/        classify.py (rules + Claude), orchestrator.py (the agentic engine)
+  sources/        base.py (BaseSource), document_source.py, structured_source.py, crm_source.py (future),
+                  connectors/ (BaseConnector adapter contracts — see docs/connectors.md)
+  routing/        classify.py (rules + LLM), orchestrator.py (the agentic engine)
   generation/     generate.py (grounded), verify.py (citation check)
   llm/            client.py (provider-agnostic + offline cache), embeddings.py (local + fallback)
+  engine.py       process-wide singleton: assembly + runtime ingestion under one lock
   pricing.py      per-answer token cost
-ui/               Next.js inspector frontend
-scripts/          seed_data.py, make_pdfs.py, eval.py
-data/             business.db + pdfs/ (committed; regenerate any time)
-docs/             overview.md, architecture.md, images/ (system overview + screenshots)
+ui/               Next.js frontend — Chat · Sources · Inspector · Settings
+scripts/          seed_data.py, make_pdfs.py, eval.py, eval_qa.py, diagnose.py
+tests/            offline-deterministic regression suite (pytest)
+data/             evaluation corpus: business.db + pdfs/ (committed; regenerate any time)
+docs/             overview.md, architecture.md, connectors.md, document-quality-report.md, …
 ```
 
 ---
@@ -207,10 +215,12 @@ docs/             overview.md, architecture.md, images/ (system overview + scree
 - **Hebrew/RTL:** PDF extractors return Hebrew runs in visual (reversed) order; the
   ingestion layer restores logical order so the index matches logical-order queries. The
   UI renders Hebrew answers and citations right-to-left.
-- **Demo data is synthetic** and dated relative to **2026-06-08**, so "expiring in 90 days"
-  and "overdue" are always live. Regenerate with `scripts/seed_data.py` + `scripts/make_pdfs.py`.
-- **Out of scope (deliberately):** auth, billing, user management. This is a focused
-  demonstration of routing, retrieval quality, grounding, and traceability.
+- **The evaluation corpus is synthetic** and anchored to **2026-06-08**; the tests and
+  eval suites pin `ABA_REFERENCE_DATE` to that anchor so date-window questions stay
+  deterministic, while production uses the real current date. Regenerate with
+  `scripts/seed_data.py` + `scripts/make_pdfs.py`.
+- **Out of scope (deliberately):** auth, billing, user management. This is a professional
+  product prototype focused on routing, retrieval quality, grounding, and traceability.
 
 See [docs/overview.md](docs/overview.md) for a screenshot walkthrough and
 [docs/architecture.md](docs/architecture.md) for the architecture deep dive.

@@ -1,13 +1,16 @@
-"""Document (PDF) source — wraps the hybrid DocumentIndex behind the Source interface."""
+"""Document (unstructured text) source — wraps the hybrid DocumentIndex behind the
+BaseSource interface. Currently fed by PDF uploads; email bodies, cloud-storage
+files, and other text-bearing systems land here via connectors."""
 from __future__ import annotations
 
 from typing import Any, Optional
 
 from app.models import DocumentRetrievalTrace, Evidence, SourceInfo
 from app.retrieval.document_retriever import DocumentIndex
+from app.sources.base import BaseSource
 
 
-class DocumentSource:
+class DocumentSource(BaseSource):
     name = "contracts_pdf"
     kind = "documents"
 
@@ -48,6 +51,8 @@ class DocumentSource:
         )
 
     def retrieve(
-        self, query: str, filters: Optional[dict[str, Any]] = None, k: Optional[int] = None
+        self, query: str, filters: Optional[dict[str, Any]] = None, k: Optional[int] = None,
+        extra_queries: Optional[list[str]] = None,
     ) -> tuple[list[Evidence], DocumentRetrievalTrace]:
-        return self.index.retrieve(query, filters=filters, final_k=k)
+        return self.index.retrieve(query, filters=filters, final_k=k,
+                                   extra_queries=extra_queries)

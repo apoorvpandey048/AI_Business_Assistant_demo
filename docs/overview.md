@@ -153,5 +153,33 @@ The source code, architecture notes, and sample data are in the repository.
 
 ---
 
+## Document ingestion — supported inputs & current limitations
+
+**Supported today**
+
+- Text-based PDFs of any business kind (contracts, briefs, reports), English and
+  Hebrew, including mixed-language documents. Hebrew text is normalized to logical
+  reading order at ingestion so retrieval works on what you'd actually type.
+- Multiple PDFs and multiple SQLite databases per workspace, uploaded at runtime;
+  every upload is indexed incrementally (no re-processing of existing sources).
+- SQLite databases with arbitrary schemas — tables are introspected automatically
+  and become queryable immediately, read-only.
+
+**Current limitations (known, by design for this MVP)**
+
+- **Scanned / image-only PDFs**: there is no OCR in this environment. A fully
+  scanned PDF is rejected with a clear message; a partially scanned one is indexed
+  and the workspace shows a per-document warning naming how many pages had no
+  extractable text.
+- **Complex tables inside PDFs** are extracted as running text — values are
+  searchable and citable, but table structure (rows/columns) is not preserved.
+- **Very large PDFs** index in one request; hundreds of pages work but ingestion
+  time grows with the embedding backend. Progress is reported per upload.
+- **Hebrew morphology in exact-match search**: single-letter prefixes (ה/ו/ב/ל/מ/ש/כ)
+  are handled; richer inflection relies on the semantic (embedding) path rather
+  than exact keyword matching.
+
+---
+
 *Prototype prepared by Apoorv. Sample data is synthetic. Happy to walk through any part of
 the architecture or the retrieval logic in more detail.*

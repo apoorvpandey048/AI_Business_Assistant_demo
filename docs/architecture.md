@@ -102,22 +102,57 @@ class Evidence(BaseModel):
 
 ---
 
-## 4. Extensibility: one `Source` interface
+## 4. Extensibility: the source model
+
+Every knowledge source subclasses one abstract base (`app/sources/base.py`):
 
 ```python
-class Source(Protocol):
-    name: str
+class BaseSource(ABC):
+    name: str   # stable id used in evidence attribution
     kind: str   # "documents" | "relational" | "api"
     def describe(self) -> SourceInfo: ...   # capabilities → fed to the router
-    def retrieve(self, ...) -> list[Evidence]: ...
 ```
 
-- `DocumentSource` (PDF) and `RelationalSource` (SQLite) ship live.
-- `CrmSource` ships as a **stub** marked `status="future"` to make the claim concrete.
+```
+BaseSource
+├── DocumentSource    unstructured text → hybrid retrieval     (document_source.py)
+├── StructuredSource  tabular records → schema-aware SQL       (structured_source.py)
+└── CrmSource         registered roadmap example, status="future" (crm_source.py)
+```
 
 The router reads each source's `describe()`, so **registering a new source makes it
-routable with no change to the router or orchestrator**. CRM, email, and cloud storage are
-new implementations of this interface — exactly the post-MVP path the brief asks us to plan for.
+routable with no change to the router or orchestrator**. The descriptions are
+data-driven (real table/document names) and rebuilt after every ingestion.
+
+External systems (Salesforce, HubSpot, Dynamics, Zoho, Gmail, Outlook, SharePoint,
+Google Drive) plug in through **connector adapters** that extract data into one of the
+two retrieval surfaces — structured rows merge into the working database, text items
+index like documents. The contracts live in `app/sources/connectors/base.py`
+(`BaseConnector`, `TablePayload`, `DocumentPayload`, `SyncResult`); the per-system
+mapping, sync model, auth rules, and integration checklist live in
+**[connectors.md](connectors.md)**. A connector never implements search, routing, or
+citations — those stay uniform across all sources.
+
+Authentication/secrets follow the existing pattern: server-side env vars only
+(`ABA_<VENDOR>_…`), never exposed to the browser.
+
+### Extension points (where new engineers plug in)
+
+| You want to… | Touch | Don't touch |
+|---|---|---|
+| Add an external integration | subclass `BaseConnector` (`app/sources/connectors/`) | router, orchestrator, generation, UI |
+| Add a new source *type* | subclass `BaseSource` + register in `Engine` | router, orchestrator |
+| Add an input file format | adapter into the chunk model (`app/ingestion/`) | retrieval, indexing |
+| Swap the vector store | implement the `VectorStore` protocol (`app/retrieval/vector_store.py`) | retrieval pipeline |
+| Swap the LLM provider | env config only (`ABA_LLM_PROVIDER`, models) | code |
+| Change retrieval tuning | `Settings` (`app/config.py`) — every knob is env-driven | pipeline code |
+| Add an answer-quality check | `scripts/eval_qa.py` cases in `data/eval/qa.jsonl` | — |
+
+**Sprint review note (June 2026):** folder boundaries were re-reviewed during the
+production-hardening sprint — ingestion / retrieval / routing / sql / generation /
+sources remain cleanly separated, every cross-layer contract goes through the Pydantic
+models in `app/models.py`, and the only shared mutable state (the engine) is mutated
+under one lock. No structural refactor was needed; deliberately none was done.
 
 ---
 
@@ -125,9 +160,9 @@ new implementations of this interface — exactly the post-MVP path the brief as
 
 | Choice | Rationale |
 |---|---|
-| Pluggable vector store (NumPy default, Qdrant adapter) | The demo's value is orchestration, not the vector DB. Qdrant is `ABA_VECTOR_BACKEND=qdrant`. |
+| Pluggable vector store (NumPy default, Qdrant adapter) | The product's value is orchestration, not the vector DB. Qdrant is `ABA_VECTOR_BACKEND=qdrant`. |
 | Local multilingual embeddings + hashing fallback | Offline, no key, strong Hebrew; the fallback keeps the repo runnable before the model downloads. The trace reports which backend produced the vectors. |
-| Provider-agnostic LLM layer + offline cache | One-file provider swap; the demo never breaks on a key/network. |
+| Provider-agnostic LLM layer + offline cache | One-file provider swap; the engine never breaks on a key/network. |
 | sqlglot AST validation, read-only execution | Safe-by-construction SQL; the model emits text, the harness controls the database. |
 | Section-aware chunking + RTL normalization | Page/section citations; correct Hebrew retrieval. |
 | Per-answer cost in the trace | Cost transparency — embeddings local ($0), generation a few cents. |
@@ -137,5 +172,5 @@ new implementations of this interface — exactly the post-MVP path the brief as
 ## 6. Out of scope (by design)
 
 Authentication, billing, user management, multi-tenancy, enterprise hardening. This is a
-focused demonstration of the things the client is evaluating: **routing intelligence,
-retrieval quality, grounded generation, and traceability.**
+professional product prototype focused on the things being evaluated: **routing
+intelligence, retrieval quality, grounded generation, and traceability.**

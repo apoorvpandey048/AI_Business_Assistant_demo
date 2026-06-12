@@ -3,7 +3,7 @@ import React from "react";
 import type {
   AskResponse, Evidence, RetrievalCandidate, SqlExecutionTrace,
 } from "@/lib/types";
-import { Icons, OriginTag, Pill, RouteBadge, ScoreBar, cn, isRTL } from "./ui";
+import { Icons, OriginTag, Pill, RouteBadge, ScoreBar, bidiPlaintext, cn, isRTL } from "./ui";
 
 /* ---------- cite → scroll/highlight ---------- */
 export function useCiteHighlight() {
@@ -20,7 +20,10 @@ export function useCiteHighlight() {
 export function CitedText({ text, onCite, rtl }: { text: string; onCite: (id: string) => void; rtl: boolean }) {
   const parts = text.split(/(\[e\d+\])/g);
   return (
-    <div dir={rtl ? "rtl" : "ltr"}
+    // dir sets the base direction + alignment; unicode-bidi:plaintext lets each line
+    // of a mixed Hebrew/English answer resolve its own direction (numbers and [eN]
+    // citation chips order correctly inside RTL text).
+    <div dir={rtl ? "rtl" : "ltr"} style={bidiPlaintext}
       className={cn("whitespace-pre-wrap text-[15px] leading-[1.75] text-slate-800", rtl && "text-right")}>
       {parts.map((p, i) => {
         const m = p.match(/^\[(e\d+)\]$/);
@@ -57,7 +60,8 @@ export function EvidenceItem({ e, highlight, compact, showUsed }: {
         {showUsed && e.used && <Pill tone="emerald"><Icons.check className="h-3 w-3" />used in answer</Pill>}
         {e.score != null && <span className="ml-auto font-mono text-[10px] text-slate-400">score {e.score.toFixed(3)}</span>}
       </div>
-      <p dir={rtl ? "rtl" : "ltr"} className={cn("text-[12.5px] leading-relaxed text-slate-600", rtl && "text-right")}>
+      <p dir={rtl ? "rtl" : "ltr"} style={bidiPlaintext}
+        className={cn("text-[12.5px] leading-relaxed text-slate-600", rtl && "text-right")}>
         {e.content.length > limit ? e.content.slice(0, limit) + "…" : e.content}
       </p>
     </div>
@@ -131,7 +135,7 @@ export function CandidatesTable({ rows }: { rows: RetrievalCandidate[] }) {
               <td className="px-2.5 py-1.5 font-mono text-slate-500">{c.final_rank}</td>
               <td className="px-2.5 py-1.5"><span className="text-slate-700">{c.document}</span>
                 {c.keyword_hit && <span className="ml-1.5 rounded bg-amber-50 px-1 py-0.5 text-[9px] font-semibold text-amber-700 ring-1 ring-amber-200">exact</span>}
-                {c.section && <span className="ml-1 text-slate-400">· {c.section.slice(0, 26)}</span>}</td>
+                {c.section && <span className="ml-1 text-slate-400" dir="auto">· {c.section.slice(0, 26)}</span>}</td>
               <td className="px-2.5 py-1.5 font-mono text-slate-500">{c.page ?? "—"}</td>
               <td className="px-2.5 py-1.5 font-mono text-slate-500">{c.dense_rank ? `#${c.dense_rank}` : "—"}</td>
               <td className="px-2.5 py-1.5 font-mono text-slate-500">{c.bm25_rank ? `#${c.bm25_rank}` : "—"}</td>

@@ -1,4 +1,4 @@
-"""API routes: /health, /config, /examples, /sources, /inventory, /ask, ingestion."""
+"""API routes: /health, /config, /sources, /inventory, /ask, ingestion."""
 from __future__ import annotations
 
 import logging
@@ -9,7 +9,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from app.config import get_settings
 from app.engine import get_engine
-from app.models import (AskRequest, AskResponse, ExampleQuestion, IngestResult,
+from app.models import (AskRequest, AskResponse, IngestResult,
                         Inventory, RouteDecision, SourceInfo, Trace)
 
 router = APIRouter()
@@ -59,11 +59,6 @@ def config() -> dict:
     }
 
 
-@router.get("/examples", response_model=list[ExampleQuestion])
-def examples() -> list[ExampleQuestion]:
-    return get_engine().examples
-
-
 @router.get("/sources", response_model=list[SourceInfo])
 def sources() -> list[SourceInfo]:
     return get_engine().sources
@@ -79,8 +74,9 @@ def ask(req: AskRequest) -> AskResponse:
     question = (req.question or "").strip()
     if not question:
         raise HTTPException(400, "Please enter a question.")
+    role = (req.role_instructions or "").strip() or None
     try:
-        return get_engine().ask(question, scope=req.scope)
+        return get_engine().ask(question, scope=req.scope, role_instructions=role)
     except Exception:  # never leak a stack trace — fail gracefully and honestly
         log.exception("ask() failed for question=%r", question)
         return AskResponse(

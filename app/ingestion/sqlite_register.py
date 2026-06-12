@@ -2,8 +2,8 @@
 
 A customer uploads an arbitrary ``.db``/``.sqlite`` file. To make its tables queryable
 through the existing single relational source — without redesigning the orchestrator —
-we MERGE the uploaded tables into a working database that the ``RelationalSource`` is
-bound to. The seed sample database is copied in first (so the flagship hybrid demo and
+we MERGE the uploaded tables into a working database that the ``StructuredSource`` is
+bound to. The seed sample database is copied in first (so the flagship hybrid flow and
 all existing behaviour keep working), then each uploaded file's tables are copied in with
 collision-safe renaming.
 

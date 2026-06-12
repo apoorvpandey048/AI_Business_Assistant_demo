@@ -12,7 +12,7 @@ export default function Inspector({ resp }: { resp: AskResponse | null }) {
     return (
       <Card>
         <EmptyState icon={<Icons.inspect className="h-6 w-6" />} title="No retrieval trace yet">
-          Ask a question in the Workspace. Every answer is recorded here in full — routing decision,
+          Ask a question in Chat. Every answer is recorded here in full — routing decision,
           generated SQL, hybrid retrieval scores, evidence aggregation, citation verification, timing,
           and token usage.
         </EmptyState>
@@ -22,15 +22,48 @@ export default function Inspector({ resp }: { resp: AskResponse | null }) {
 
   const t = resp.trace;
 
+  // Source usage: which concrete sources contributed evidence, and how much of it
+  // actually grounds the answer. Aggregated from the same Evidence objects the
+  // answer cites — there is no separate bookkeeping to drift out of sync.
+  const usage = new Map<string, { kind: string; retrieved: number; used: number }>();
+  for (const e of t.evidence) {
+    const name = e.document || e.table || e.source_name;
+    const row = usage.get(name) || { kind: e.source_kind, retrieved: 0, used: 0 };
+    row.retrieved += 1;
+    if (e.used) row.used += 1;
+    usage.set(name, row);
+  }
+
   return (
     <div className="fade-up space-y-4">
       <Card className="px-4 py-4"><Stepper resp={resp} /></Card>
+
+      {usage.size > 0 && (
+        <Card className="p-4">
+          <SectionTitle hint={`${t.evidence.length} evidence item(s)`}>Source usage</SectionTitle>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from(usage.entries()).map(([name, u]) => (
+              <div key={name} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                <span className="flex min-w-0 items-center gap-2 text-[12px] font-medium text-slate-700">
+                  {u.kind === "relational"
+                    ? <Icons.db className="h-3.5 w-3.5 shrink-0 text-sky-500" />
+                    : <Icons.doc className="h-3.5 w-3.5 shrink-0 text-emerald-500" />}
+                  <span className="truncate" title={name}>{name}</span>
+                </span>
+                <Pill tone={u.used > 0 ? "emerald" : "slate"}>
+                  {u.used > 0 ? `${u.used} used / ${u.retrieved} retrieved` : `${u.retrieved} retrieved, unused`}
+                </Pill>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {t.route && (
         <Collapsible icon={<Icons.route />} title={<>Routing decision <RouteBadge route={t.route.route} small /></>}
           right={<Pill tone="indigo">{(t.route.confidence * 100).toFixed(0)}% confidence</Pill>}>
           <div className="space-y-2 text-[12.5px] text-slate-600">
-            <p>{t.route.reasoning}</p>
+            <p dir="auto">{t.route.reasoning}</p>
             {t.route.route === "NONE" && (
               <p className="text-slate-500">No matching evidence found in uploaded sources.</p>
             )}
@@ -51,7 +84,7 @@ export default function Inspector({ resp }: { resp: AskResponse | null }) {
             {t.notes.map((n, i) => (
               <li key={i} className="flex gap-2.5 text-[12.5px] text-slate-600">
                 <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-indigo-50 font-mono text-[9px] text-indigo-600 ring-1 ring-indigo-200">{i + 1}</span>
-                <span>{n}</span>
+                <span dir="auto">{n}</span>
               </li>
             ))}
           </ol>
@@ -73,6 +106,9 @@ export default function Inspector({ resp }: { resp: AskResponse | null }) {
             </p>
           )}
           <div className="mb-2.5 flex flex-wrap gap-2 text-[11px]">
+            {t.safety_net && (
+              <Pill tone="amber"><Icons.shield className="h-3 w-3" />safety net — evidence recovered by direct search</Pill>
+            )}
             {t.document_retrieval.intent && (
               <Pill tone={t.document_retrieval.intent === "keyword" ? "amber" : "slate"}>
                 intent: {t.document_retrieval.intent}
@@ -138,11 +174,18 @@ export default function Inspector({ resp }: { resp: AskResponse | null }) {
             )}
           </div>
         </div>
-        {t.llm_calls.length > 0 && (
+        {(t.llm_calls.length > 0 || !!t.generation) && (
           <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
             {t.llm_calls.map((c, i) => (
               <Pill key={i} tone={c.mode === "live" ? "emerald" : "slate"}>{c.purpose}: {c.model} ({c.mode})</Pill>
             ))}
+            {!!(t.generation as any)?.model && (
+              <Pill>generation mode: {String((t.generation as any).model)}</Pill>
+            )}
+            {!!(t.generation as any)?.role_applied && (
+              <Pill tone="indigo">user role applied</Pill>
+            )}
+            {t.safety_net && <Pill tone="amber">safety net fired</Pill>}
           </div>
         )}
       </Card>

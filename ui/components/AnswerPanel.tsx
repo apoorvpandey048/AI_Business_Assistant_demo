@@ -9,7 +9,9 @@ export default function AnswerPanel({
 }: { resp: AskResponse; onOpenInspector?: () => void }) {
   const t = resp.trace;
   const { highlight, onCite } = useCiteHighlight();
-  const rtlAnswer = isRTL(resp.answer) || t.languages.includes("he");
+  // Direction follows the ANSWER's dominant script — not the question language.
+  // (An English fallback answer to a Hebrew question must stay LTR, and vice versa.)
+  const rtlAnswer = isRTL(resp.answer);
   const docSel = t.document_retrieval?.candidates.filter((c) => c.selected).length ?? 0;
   const sqlRows = t.sql_executions.filter((s) => s.purpose !== "entity_link").reduce((a, s) => a + s.row_count, 0);
   const retrievalSummary = [
@@ -75,8 +77,10 @@ export default function AnswerPanel({
         )}
       </Card>
 
-      {/* supporting evidence — only the passages/rows the answer is grounded in */}
-      {supporting.length > 0 && (
+      {/* supporting evidence — only the passages/rows the answer is grounded in.
+          Hidden entirely for insufficient answers: showing evidence under "not
+          answered" is exactly the untrustworthy-panel confusion the client hit. */}
+      {supporting.length > 0 && !resp.insufficient && (
         <Card className="p-4">
           <SectionTitle hint={supportingHint}>Supporting evidence</SectionTitle>
           <p className="-mt-1 mb-2.5 text-[11.5px] text-slate-400">

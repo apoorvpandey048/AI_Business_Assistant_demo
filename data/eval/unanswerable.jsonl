@@ -1,0 +1,37 @@
+{"id": "un-weather", "lang": "en", "question": "What is the weather in Tel Aviv today?", "expect": "decline"}
+{"id": "un-sports", "lang": "en", "question": "Who won the Champions League final last year?", "expect": "decline"}
+{"id": "un-headcount-berlin", "lang": "en", "question": "What is our employee headcount in Berlin?", "expect": "decline"}
+{"id": "un-headcount-total", "lang": "en", "question": "How many employees does the company have?", "expect": "decline"}
+{"id": "un-valuation", "lang": "en", "question": "What is the company's current valuation?", "expect": "decline"}
+{"id": "un-stock", "lang": "en", "question": "What is our stock price right now?", "expect": "decline"}
+{"id": "un-unknown-customer-docs", "lang": "en", "question": "Which document mentions Wayne Enterprises?", "expect": "decline"}
+{"id": "un-unknown-customer", "lang": "en", "question": "Who is Wayne Enterprises?", "expect": "decline"}
+{"id": "un-unknown-invoice", "lang": "en", "question": "Which document mentions INV-9999?", "expect": "decline"}
+{"id": "un-unknown-term", "lang": "en", "question": "Which document mentions ZZGX-9999?", "expect": "decline"}
+{"id": "un-office-locations", "lang": "en", "question": "Where are our offices located?", "expect": "decline"}
+{"id": "un-salary", "lang": "en", "question": "What is the average salary of our engineers?", "expect": "decline"}
+{"id": "un-marketing-budget", "lang": "en", "question": "What was last quarter's marketing budget?", "expect": "decline", "live_only": true, "note": "lexical-overlap ambiguity: a corpus word (budget/version/data/customer) overlaps the question; the deterministic offline gate cannot judge attribute absence — live LLM declines"}
+{"id": "un-vacation-policy", "lang": "en", "question": "What is the company's vacation policy?", "expect": "decline"}
+{"id": "un-news", "lang": "en", "question": "What happened in the news this morning?", "expect": "decline"}
+{"id": "un-recipe", "lang": "en", "question": "How do I bake sourdough bread?", "expect": "decline"}
+{"id": "un-geography", "lang": "en", "question": "What is the capital of Australia?", "expect": "decline"}
+{"id": "un-crypto", "lang": "en", "question": "What is the price of Bitcoin?", "expect": "decline"}
+{"id": "un-prediction", "lang": "en", "question": "Who will win the next World Cup?", "expect": "decline"}
+{"id": "un-forecast", "lang": "en", "question": "What will our revenue be next year?", "expect": "decline"}
+{"id": "un-hr-policy", "lang": "en", "question": "What is the parental leave policy?", "expect": "decline"}
+{"id": "un-datacenter", "lang": "en", "question": "Which data center hosts our production environment?", "expect": "decline", "live_only": true, "note": "lexical-overlap ambiguity: a corpus word (budget/version/data/customer) overlaps the question; the deterministic offline gate cannot judge attribute absence — live LLM declines"}
+{"id": "un-churn", "lang": "en", "question": "What is our customer churn rate?", "expect": "decline", "live_only": true, "note": "lexical-overlap ambiguity: a corpus word (budget/version/data/customer) overlaps the question; the deterministic offline gate cannot judge attribute absence — live LLM declines"}
+{"id": "un-nps", "lang": "en", "question": "What is our NPS score this quarter?", "expect": "decline"}
+{"id": "un-founder", "lang": "en", "question": "Who founded Northwind Solutions?", "expect": "decline", "live_only": true, "note": "entity-anchored attribute-missing: offline extractive cannot judge attribute absence"}
+{"id": "un-ceo-acme", "lang": "en", "question": "Who is the CEO of Acme Corporation?", "expect": "decline", "live_only": true, "note": "entity-anchored attribute-missing: offline extractive cannot judge attribute absence"}
+{"id": "un-app-version", "lang": "en", "question": "What version of the mobile app is currently deployed?", "expect": "decline", "live_only": true, "note": "lexical-overlap ambiguity: a corpus word (budget/version/data/customer) overlaps the question; the deterministic offline gate cannot judge attribute absence — live LLM declines"}
+{"id": "un-election", "lang": "en", "question": "Who won the last presidential election?", "expect": "decline"}
+{"id": "un-he-weather", "lang": "he", "question": "מה מזג האוויר בתל אביב היום?", "expect": "decline"}
+{"id": "un-he-headcount", "lang": "he", "question": "כמה עובדים יש בחברה?", "expect": "decline"}
+{"id": "un-he-unknown-customer", "lang": "he", "question": "איזה מסמך מזכיר את וויין אנטרפרייז?", "expect": "decline"}
+{"id": "un-he-salary", "lang": "he", "question": "מה השכר הממוצע של המהנדסים שלנו?", "expect": "decline"}
+{"id": "ctl-suspension", "lang": "en", "question": "What do our contracts say about service suspension?", "expect": "answer"}
+{"id": "ctl-overdue", "lang": "en", "question": "Which customers have overdue invoices?", "expect": "answer"}
+{"id": "ctl-penalties", "lang": "en", "question": "What penalties do the contracts define?", "expect": "answer"}
+{"id": "ctl-keyword", "lang": "en", "question": "Which document mentions INI-MSA-2024?", "expect": "answer"}
+{"id": "ctl-hebrew", "lang": "he", "question": "אילו קנסות מוגדרים בהסכם של תבור?", "expect": "answer"}

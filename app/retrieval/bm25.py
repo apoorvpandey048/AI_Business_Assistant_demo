@@ -31,5 +31,7 @@ class BM25Index:
         if self._bm25 is None or not self._ids:
             return []
         scores = self._bm25.get_scores(tokenize(query) or ["∅"])
-        ranked = sorted(zip(self._ids, scores), key=lambda x: x[1], reverse=True)
+        # stable tie-break by chunk id — equal scores must rank identically in every
+        # process, or evaluation results flicker run-to-run (sprint WS10 finding)
+        ranked = sorted(zip(self._ids, scores), key=lambda x: (-x[1], x[0]))
         return [(i, float(s)) for i, s in ranked[:k] if s > 0]

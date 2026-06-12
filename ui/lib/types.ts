@@ -119,6 +119,7 @@ export interface Trace {
   cost?: CostSummary | null;
   timings: { name: string; duration_ms: number }[];
   mode: string;
+  safety_net?: boolean;
 }
 
 export interface AskResponse {
@@ -127,14 +128,6 @@ export interface AskResponse {
   insufficient: boolean;
   citations: Evidence[];
   trace: Trace;
-}
-
-export interface ExampleQuestion {
-  label: string;
-  question: string;
-  route: Route;
-  why: string;
-  language: string;
 }
 
 export interface SourceInfo {
@@ -178,6 +171,7 @@ export interface IngestedDocumentInfo {
   pages?: number | null;
   ingestion_ms: number;
   error?: string | null;
+  warning?: string | null;
 }
 
 export interface IngestedDatabaseInfo {

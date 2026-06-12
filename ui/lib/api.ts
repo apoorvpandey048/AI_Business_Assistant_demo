@@ -1,5 +1,5 @@
 import type {
-  AppConfig, AskResponse, ExampleQuestion, IngestResult, Inventory, SourceInfo,
+  AppConfig, AskResponse, IngestResult, Inventory, SourceInfo,
 } from "./types";
 
 // All API calls go through the UI's own origin at /api/*, which the Next server proxies
@@ -19,10 +19,6 @@ export async function fetchConfig(): Promise<AppConfig> {
   return getJSON<AppConfig>("/config");
 }
 
-export async function fetchExamples(): Promise<ExampleQuestion[]> {
-  return getJSON<ExampleQuestion[]>("/examples");
-}
-
 export async function fetchSources(): Promise<SourceInfo[]> {
   return getJSON<SourceInfo[]>("/sources");
 }
@@ -31,13 +27,18 @@ export async function fetchInventory(): Promise<Inventory> {
   return getJSON<Inventory>("/inventory");
 }
 
-export type AskScope = "workspace" | "demo" | "all";
+// "workspace" answers only from the user's uploaded sources; "all" additionally
+// includes the bundled evaluation corpus (diagnostics only — never used by the UI).
+export type AskScope = "workspace" | "all";
 
-export async function ask(question: string, scope: AskScope = "workspace"): Promise<AskResponse> {
+export async function ask(
+  question: string, scope: AskScope = "workspace", roleInstructions?: string,
+): Promise<AskResponse> {
+  const role = (roleInstructions || "").trim();
   const res = await fetch(`${apiBase()}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, scope }),
+    body: JSON.stringify({ question, scope, ...(role ? { role_instructions: role } : {}) }),
   });
   if (!res.ok) throw new Error(`ask → ${res.status}`);
   return res.json();

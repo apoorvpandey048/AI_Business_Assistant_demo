@@ -11,7 +11,7 @@ JSON extractor otherwise, so the same call sites work across all of them.
 
 A deterministic OFFLINE path remains: every call site supplies a ``fallback`` so the
 whole pipeline keeps working (and stays grounded) with no key or network. Live
-responses are cached to disk so a once-run demo replays identically.
+responses are cached to disk so a previously-asked question replays identically.
 """
 from __future__ import annotations
 
@@ -130,8 +130,9 @@ class LLMClient:
         if self.s.use_live_llm and self._live_client() is not None:
             try:
                 result, usage = self._dispatch(model, system, user, schema, max_tokens)
-                self._cache[key] = result
-                self._save_cache()
+                if self.s.llm_cache_write:
+                    self._cache[key] = result
+                    self._save_cache()
                 from app.pricing import call_cost
                 return result, LLMCall(
                     purpose=purpose, model=model, mode="live",
