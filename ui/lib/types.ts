@@ -136,7 +136,7 @@ export interface SourceInfo {
   title: string;
   description: string;
   capabilities: string[];
-  status: "active" | "future";
+  status: "active" | "empty" | "future";
   details: Record<string, unknown>;
 }
 

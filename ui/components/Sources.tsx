@@ -179,8 +179,14 @@ export default function Sources({
   const uploadedChunks = uploadedDocs.reduce((a, d) => a + (d.chunks_indexed || 0), 0);
   const uploadedTables = uploadedDbs.reduce((a, d) => a + d.tables.length, 0);
 
+  // Same wording as Settings → Workspace data: Reset means workspace DATA (uploads +
+  // conversation + trace). The analysis mode is a preference and is never touched.
   const confirmReset = () => {
-    if (window.confirm("Remove all sources from this workspace? This cannot be undone.")) {
+    if (window.confirm(
+      "Remove all uploaded sources and clear the current conversation?\n\n" +
+      "Your analysis mode (role) is a preference and will be kept — clear it " +
+      "separately in Settings if you want a full reset.\n\nThis cannot be undone."
+    )) {
       onReset();
     }
   };

@@ -203,7 +203,9 @@ class SourceInfo(BaseModel):
     title: str
     description: str
     capabilities: list[str] = Field(default_factory=list)
-    status: Literal["active", "future"] = "active"
+    # "active" = connected with user data; "empty" = available but nothing uploaded yet;
+    # "future" = roadmap connector shown for extensibility.
+    status: Literal["active", "empty", "future"] = "active"
     details: dict[str, Any] = Field(default_factory=dict)
 
 
