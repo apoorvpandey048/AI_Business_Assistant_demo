@@ -40,14 +40,14 @@ def test_negative_mention_flips_insufficient_and_clears_citations(sample_engine,
     real = client_mod.LLMClient.structured
 
     def fake_structured(self, *, purpose, model, system, user, schema,
-                        fallback=None, max_tokens=None):
+                        fallback=None, max_tokens=None, accept=None):
         if purpose == "generation":
             from app.models import LLMCall
             return ({"answer": "The documents do not mention Wayne Enterprises.",
                      "citations": ["e1", "e2"], "insufficient": False},
                     LLMCall(purpose=purpose, model=model, mode="live"))
         return real(self, purpose=purpose, model=model, system=system, user=user,
-                    schema=schema, fallback=fallback, max_tokens=max_tokens)
+                    schema=schema, fallback=fallback, max_tokens=max_tokens, accept=accept)
 
     monkeypatch.setattr(client_mod.LLMClient, "structured", fake_structured)
     resp = sample_engine.ask("What do our contracts say about service suspension?",

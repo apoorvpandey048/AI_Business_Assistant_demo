@@ -68,9 +68,10 @@ class LLMClient:
 
     # -- public API --------------------------------------------------------
     def structured(self, *, purpose, model, system, user, schema,
-                   fallback=None, max_tokens=None) -> tuple[dict[str, Any], LLMCall]:
+                   fallback=None, max_tokens=None, accept=None) -> tuple[dict[str, Any], LLMCall]:
         return self._run(purpose=purpose, model=model, system=system, user=user,
-                         schema=schema, fallback=fallback, max_tokens=max_tokens)
+                         schema=schema, fallback=fallback, max_tokens=max_tokens,
+                         accept=accept)
 
     def text(self, *, purpose, model, system, user,
              fallback=None, max_tokens=None) -> tuple[str, LLMCall]:
@@ -79,12 +80,25 @@ class LLMClient:
         return (data if isinstance(data, str) else data.get("text", "")), call
 
     # -- core --------------------------------------------------------------
-    def _run(self, *, purpose, model, system, user, schema, fallback, max_tokens):
+    def _run(self, *, purpose, model, system, user, schema, fallback, max_tokens, accept=None):
         key = self._key(purpose, model, system, user)
         t0 = time.perf_counter()
 
-        # cache-first: replay an identical prior call instantly (snappy demos).
-        if self.s.cache_first and key in self._cache:
+        def _ok(result: Any) -> bool:
+            # An optional quality gate (e.g. answer-language integrity). A result that
+            # fails it is treated as if it never happened: never cached, never replayed,
+            # so the call falls through to a fresh attempt or the deterministic fallback.
+            if accept is None:
+                return True
+            try:
+                return bool(accept(result))
+            except Exception:
+                return True            # a buggy acceptor must never break answering
+
+        # cache-first: replay an identical prior call instantly (snappy demos) — but only
+        # if the cached result still passes the quality gate (a previously-cached defective
+        # answer self-heals instead of replaying forever).
+        if self.s.cache_first and key in self._cache and _ok(self._cache[key]):
             return self._cache[key], LLMCall(
                 purpose=purpose, model=model, mode="cached",
                 duration_ms=round((time.perf_counter() - t0) * 1000, 1),
@@ -95,6 +109,8 @@ class LLMClient:
                 result, usage = self.provider.generate(
                     model=model, system=system, user=user,
                     schema=schema, max_tokens=max_tokens)
+                if not _ok(result):
+                    raise ValueError("generation rejected by quality gate")
                 if self.s.llm_cache_write:
                     self._cache[key] = result
                     self._save_cache()
@@ -108,7 +124,7 @@ class LLMClient:
             except Exception as exc:
                 self._last_error = str(exc)
 
-        if key in self._cache:
+        if key in self._cache and _ok(self._cache[key]):
             return self._cache[key], LLMCall(
                 purpose=purpose, model=model, mode="cached",
                 duration_ms=round((time.perf_counter() - t0) * 1000, 1),
