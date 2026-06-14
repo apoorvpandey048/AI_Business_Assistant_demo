@@ -2,10 +2,12 @@
 and chunk in a section-aware way so every chunk carries document/page/section
 metadata for citations.
 
-RTL note: PDF text extractors return Hebrew runs in reversed (visual) order. We
-restore logical order in the ingestion layer so the index matches logical-order
-Hebrew queries. Latin/numeric runs (e.g. "SLA-2025", "(30)") are already correct
-and are left untouched.
+RTL note: SOME PDF text extractors return Hebrew runs in reversed (visual) order;
+others already return logical order. We DETECT the order per page and only reverse
+visual-order text, so a logical-order extraction is never corrupted (the bug behind
+the Jenny investigation: an upload extracted in logical order was being double-reversed
+into garbage — ``מוחמד`` → ``דמחומ``). Latin/numeric runs (e.g. "SLA-2025", "(30)") are
+left untouched in either case.
 """
 from __future__ import annotations
 
@@ -20,15 +22,53 @@ _HEB = re.compile(r"[֐-׿]")
 _HEADING = re.compile(r"^\s*‎?\s*(\d+)\.\s+\S")
 _CONTROL = re.compile(r"[‎‏‪-‮]")  # bidi control marks
 
+# Hebrew final-form letters. Orthographically these occur ONLY at the END of a word,
+# so their position is a direction fingerprint: in logical order they sit at word-ends,
+# in visual (reversed) order they sit at word-starts. This is lexicon-free and works on
+# any Hebrew text. See docs/hebrew-ingestion-fix-plan.md.
+_HEB_FINALS = set("ךםןףץ")
+_HEB_WORD = re.compile(r"[֐-׿]{2,}")
+
 
 def _is_hebrew_token(tok: str) -> bool:
     return bool(_HEB.search(tok))
 
 
-def normalize_rtl(text: str) -> str:
-    """Restore logical reading order for Hebrew runs in extractor output."""
-    if not _HEB.search(text):
-        return text
+def detect_text_order(text: str) -> str:
+    """Classify the reading order of Hebrew in extractor output.
+
+    Returns ``"none"`` (no Hebrew), ``"logical"`` (already correct — leave as-is), or
+    ``"visual"`` (reversed — must be flipped). Deterministic and offline.
+
+    Primary signal: Hebrew final-form letters (ך ם ן ף ץ) appear only at word-ends in
+    logical order and at word-starts when reversed. Tie-break: common Hebrew function
+    words (the intent layer's stopword list) matched as-is vs reversed. When genuinely
+    ambiguous, default to ``"logical"`` — leaving correct text alone is always safe,
+    whereas reversing correct text is the corruption we are fixing.
+    """
+    toks = _HEB_WORD.findall(text or "")
+    if not toks:
+        return "none"
+    final_end = sum(1 for t in toks if t[-1] in _HEB_FINALS)
+    final_start = sum(1 for t in toks if t[0] in _HEB_FINALS)
+    if final_end != final_start:
+        return "logical" if final_end > final_start else "visual"
+    # Tie-break on a small built-in lexicon of common Hebrew function words.
+    try:
+        from app.retrieval.intent import _STOP_HE as _anchors
+    except Exception:  # pragma: no cover - defensive
+        _anchors = set()
+    if _anchors:
+        as_is = sum(1 for t in toks if t in _anchors)
+        rev = sum(1 for t in toks if t[::-1] in _anchors)
+        if rev > as_is:
+            return "visual"
+    return "logical"
+
+
+def _reverse_hebrew_runs(text: str) -> str:
+    """Reverse Hebrew runs (chars + token order) to flip VISUAL → LOGICAL order.
+    Latin/numeric tokens keep their position; only Hebrew spans are reversed."""
     out_lines = []
     for line in text.split("\n"):
         line = _CONTROL.sub("", line)
@@ -49,6 +89,20 @@ def normalize_rtl(text: str) -> str:
                 i += 1
         out_lines.append(" ".join(result))
     return "\n".join(out_lines)
+
+
+def normalize_rtl(text: str) -> str:
+    """Return Hebrew text in logical reading order.
+
+    Only VISUAL-order extractor output is reversed; LOGICAL-order text (and any text
+    with no Hebrew) is returned unchanged. This makes the function safe for extractors
+    that already emit logical order — the previous unconditional reversal corrupted
+    those (the Jenny investigation bug)."""
+    if not _HEB.search(text):
+        return text
+    if detect_text_order(text) != "visual":
+        return text
+    return _reverse_hebrew_runs(text)
 
 
 def detect_language(text: str) -> str:
