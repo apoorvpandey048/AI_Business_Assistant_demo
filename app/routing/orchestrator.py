@@ -9,6 +9,7 @@ import re
 import time
 from typing import Optional
 
+from app.config import get_settings
 from app.generation.conflicts import detect_conflicts
 from app.generation.generate import generate_answer
 from app.generation.verify import verify_citations
@@ -35,6 +36,36 @@ class Orchestrator:
         )
 
     # ----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
+    @staticmethod
+    def _cross_language_enabled() -> bool:
+        return bool(get_settings().cross_language_retrieval)
+
+    def _retrieve_xl(self, query: str, languages: list[str] | None,
+                     allowed_docs: Optional[list[str]],
+                     extra_queries: Optional[list[str]] = None):
+        """Document retrieval with same-language-first, cross-language fallback.
+
+        Searches the question's language first (byte-identical to the legacy filtered
+        behavior). Only if that returns NOTHING and cross-language retrieval is enabled
+        does it widen to all languages — the R1 target case where the fact lives only in
+        the other language. Returns (evidence, dtrace, widened: bool)."""
+        def _run(langs: list[str] | None):
+            filters: dict = {}
+            if langs:
+                filters["languages"] = langs
+            if allowed_docs:
+                filters["documents"] = allowed_docs
+            return self.documents.retrieve(query, filters=filters,
+                                           extra_queries=extra_queries)
+
+        ev, dtrace = _run(languages)
+        if not ev and languages and self._cross_language_enabled():
+            wev, wtrace = _run(None)
+            if wev:
+                return wev, wtrace, True
+        return ev, dtrace, False
+
     def ask(self, question: str, allowed_docs: Optional[list[str]] = None,
             allowed_tables: Optional[list[str]] = None,
             role_instructions: Optional[str] = None) -> AskResponse:
@@ -257,13 +288,10 @@ class Orchestrator:
         """Search the in-scope documents on the ORIGINAL question (never the router's
         possibly-mangled document_subquery) and adopt the result only if it is lexically
         on-topic. Returns adopted evidence (possibly empty)."""
-        filters: dict = {}
-        if decision.languages:
-            filters["languages"] = decision.languages
-        if allowed_docs:
-            filters["documents"] = allowed_docs
-        ev, dtrace = self.documents.retrieve(question, filters=filters)
+        ev, dtrace, widened = self._retrieve_xl(question, decision.languages, allowed_docs)
         trace.document_retrieval = dtrace      # show the recovery attempt in the inspector
+        if widened:
+            trace.notes.append("Safety net widened across languages (R1 fallback).")
         n_docs = len(allowed_docs) if allowed_docs else len(self.documents.documents)
 
         if not ev:
@@ -298,12 +326,8 @@ class Orchestrator:
         conflict → nothing is adopted → identical behavior to before this check."""
         if allowed_docs is not None and len(allowed_docs) == 0:
             return []
-        filters: dict = {}
-        if decision.languages:
-            filters["languages"] = decision.languages
-        if allowed_docs:
-            filters["documents"] = allowed_docs
-        probe_ev, probe_trace = self.documents.retrieve(question, filters=filters)
+        probe_ev, probe_trace, _ = self._retrieve_xl(question, decision.languages,
+                                                     allowed_docs)
         if not probe_ev:
             return []
         conflicts = detect_conflicts(evidence + probe_ev)
@@ -337,18 +361,18 @@ class Orchestrator:
         if allowed_docs is not None and len(allowed_docs) == 0:
             trace.notes.append("No documents in scope — skipping document retrieval.")
             return []
-        filters: dict = {}
-        if languages:
-            filters["languages"] = languages
-        if allowed_docs:
-            filters["documents"] = allowed_docs
         # The user's question is the PRIMARY search; the router's rewritten sub-query
-        # joins the fusion as an auxiliary phrasing. A rewrite ("look for the recipient
-        # of the proposal in the documents") adds recall but can never out-vote or
-        # crowd out the question itself (question-anchor guarantee in the retriever).
+        # joins the fusion as an auxiliary phrasing. Cross-language retrieval (R1) is
+        # ADDITIVE: same-language first (no same-language regression), widen only if that
+        # finds nothing. See _retrieve_xl.
         extra = [rewrite] if rewrite and rewrite.strip() != query.strip() else None
-        ev, dtrace = self.documents.retrieve(query, filters=filters, extra_queries=extra)
+        ev, dtrace, widened = self._retrieve_xl(query, languages, allowed_docs, extra)
         trace.document_retrieval = dtrace
+        if widened:
+            trace.notes.append(
+                "Cross-language fallback: no same-language passage found; widened "
+                "retrieval to all languages (answer language still enforced)."
+            )
         trace.notes.append(
             f"Document retrieval ({dtrace.embedding_backend} + BM25 → RRF → "
             f"{dtrace.reranker_backend}) selected {len(ev)} passage(s)."
@@ -519,15 +543,24 @@ class Orchestrator:
                 trace.notes.append("Step 3 — linked documents are out of scope; no document evidence.")
                 return evidence
             doc_filter["documents"] = docs_list
-        if decision.languages:
-            doc_filter["languages"] = decision.languages
 
         # primary = the user's question; the router's focused sub-query joins the
         # fusion as an auxiliary phrasing (same rationale as _doc_branch)
         sub = decision.document_subquery
         extra = [sub] if sub and sub.strip() != question.strip() else None
-        doc_ev, dtrace = self.documents.retrieve(question, filters=doc_filter,
+        # Cross-language (R1): same-language first, widen only if empty.
+        langs = decision.languages
+        same_filter = dict(doc_filter)
+        if langs:
+            same_filter["languages"] = langs
+        doc_ev, dtrace = self.documents.retrieve(question, filters=same_filter,
                                                  extra_queries=extra)
+        if not doc_ev and langs and self._cross_language_enabled():
+            wev, wtrace = self.documents.retrieve(question, filters=doc_filter,
+                                                  extra_queries=extra)
+            if wev:
+                doc_ev, dtrace = wev, wtrace
+                trace.notes.append("Step 3 — cross-language fallback widened retrieval.")
         trace.document_retrieval = dtrace
         # Stamp the owning entity onto each passage so the model can't misattribute a
         # generic clause (e.g. "Provider may suspend…") to the wrong customer.

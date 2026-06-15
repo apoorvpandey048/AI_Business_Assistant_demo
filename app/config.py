@@ -130,6 +130,15 @@ class Settings(BaseSettings):
     enable_completeness_check: bool = True
     completeness_max_passes: int = 2     # bounded verify→fill loop (cost guard)
 
+    # --- Cross-language retrieval (Sprint 15 / Hebrew parity, R1) ----------
+    # When True, document retrieval does NOT hard-filter chunks to the question's
+    # language: a Hebrew question can surface evidence from an English document and
+    # vice-versa. Answer language is still enforced deterministically at generation,
+    # so relaxing the *retrieval* filter never changes the answer's language — it only
+    # widens what evidence is reachable. This closes the structural cross-language
+    # recall gap (a fact in a Hebrew doc was unreachable to an English question).
+    cross_language_retrieval: bool = True
+
     # --- Entity index + knowledge graph (Zero-Loss sprint, Phase 3) --------
     # An entity index (entity → chunks + DB rows) and a knowledge graph (co-occurrence,
     # document ownership, cross-source same-as) let retrieval pull in CONNECTED facts
