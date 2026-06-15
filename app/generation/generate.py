@@ -15,7 +15,8 @@ from typing import Any
 from app.config import get_settings
 from app.generation.conflicts import (conflict_reported, conflict_statements)
 from app.llm.client import get_llm
-from app.llm.lang import generation_acceptable, question_language
+from app.llm.lang import (generation_acceptable, language_directive,
+                          question_language, resolve_answer_language)
 from app.models import Conflict, Evidence
 from app.retrieval.intent import content_terms, term_in_text
 
@@ -287,7 +288,7 @@ def generate_answer(question: str, evidence: list[Evidence],
         data = _keyword_answer(keyword_terms, evidence)
         return data["answer"], data["citations"], data["insufficient"], None
 
-    target_language = question_language(question)
+    target_language = resolve_answer_language(question, role_instructions)
     user = f"Question: {question}\n\nEvidence:\n{_evidence_block(evidence)}"
     if conflicts:
         user += _conflict_prompt_block(conflicts)
