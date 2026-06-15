@@ -115,6 +115,23 @@ body {
   }
 }
 
+/* Timeline rail — the continuous vertical line the event nodes sit on.
+   Mirrors to the right side under RTL ([dir="rtl"]). */
+.timeline-rail::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 0;
+  width: 2px;
+  border-radius: 9999px;
+  background: linear-gradient(to bottom, #c7d2fe, #e6e8ec);
+}
+.timeline-rail[dir="rtl"]::before {
+  left: auto;
+  right: 0;
+}
+
 /* Drop target highlight */
 .dropzone {
   border: 1.5px dashed var(--border-strong);

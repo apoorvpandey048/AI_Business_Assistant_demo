@@ -2,7 +2,10 @@
 import React from "react";
 import type { AskResponse } from "@/lib/types";
 import { Button, Card, Icons, Pill, RouteBadge, SectionTitle, cn, isRTL } from "./ui";
-import { CitationChips, CitedText, EvidenceItem, useCiteHighlight } from "./trace";
+import { CitationChips, EvidenceItem, useCiteHighlight } from "./trace";
+import AnswerBody from "./AnswerBody";
+import TriagePanel from "./TriagePanel";
+import Timeline from "./Timeline";
 
 export default function AnswerPanel({
   resp, onOpenInspector,
@@ -54,6 +57,9 @@ export default function AnswerPanel({
         </span>
       </Card>
 
+      {/* triage panels — above the answer card; renders null unless defined */}
+      <TriagePanel triage={resp.triage} onCite={onCite} />
+
       {/* answer */}
       <Card className={cn("p-5", resp.insufficient && "ring-1 ring-amber-200")}>
         <div className="mb-3 flex items-center justify-between">
@@ -67,7 +73,7 @@ export default function AnswerPanel({
         {resp.insufficient && (
           <div className="mb-3"><Pill tone="amber"><Icons.alert className="h-3 w-3" />Insufficient evidence — not answered</Pill></div>
         )}
-        <CitedText text={resp.answer} onCite={onCite} rtl={rtlAnswer} />
+        <AnswerBody text={resp.answer} tables={resp.tables ?? []} onCite={onCite} rtl={rtlAnswer} />
 
         {resp.citations.length > 0 && (
           <div className="mt-4 border-t border-slate-100 pt-3.5">
@@ -76,6 +82,9 @@ export default function AnswerPanel({
           </div>
         )}
       </Card>
+
+      {/* timeline — visual chronology below the answer; renders null when empty */}
+      <Timeline events={resp.timeline ?? []} onCite={onCite} />
 
       {/* supporting evidence — only the passages/rows the answer is grounded in.
           Hidden entirely for insufficient answers: showing evidence under "not

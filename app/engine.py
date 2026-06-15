@@ -260,7 +260,8 @@ class Engine:
             ]
 
     def ask(self, question: str, scope: str = "all",
-            role_instructions: str | None = None):
+            role_instructions: str | None = None,
+            case_instructions: str | None = None):
         with self._lock:
             allowed_docs, allowed_tables = self._scope_sources(scope)
             if scope == "workspace" and not allowed_docs and not allowed_tables:
@@ -268,6 +269,7 @@ class Engine:
             resp = self.orchestrator.ask(
                 question, allowed_docs=allowed_docs, allowed_tables=allowed_tables,
                 role_instructions=role_instructions,
+                case_instructions=case_instructions,
             )
             self._stamp_origin(resp.trace.evidence)
             return resp
