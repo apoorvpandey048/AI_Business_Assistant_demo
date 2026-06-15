@@ -84,3 +84,37 @@ def test_uses_top_evidence_chunk_score():
     ev = [_ev("c1", "Diagnosis: Dementia")]
     tr = _Trace(candidates=[_Cand("c1", 0.50), _Cand("c9", 0.10)])
     assert _cross_script_relevant(ev, tr, floor=0.42) is True
+
+
+# --- cross-language grounding (generation guard) ------------------------------------
+# A Hebrew answer grounded in an English passage shares no content WORD, so the lexical
+# grounding guard would wrongly decline it. Script-invariant anchors (numbers, Latin
+# medical terms, codes) keep it grounded while still rejecting injections.
+
+def test_hebrew_answer_grounded_in_english_via_anchor():
+    from app.generation.generate import _grounded_in_evidence
+
+    class _E:
+        def __init__(self, c): self.content = c
+    ev = [_E("Diagnosis: Dementia, Hip Fracture, COVID-19. Donepezil 10 mg daily.")]
+    he = "האבחנה כוללת דמנציה, שבר בירך, ו-COVID-19; התרופה Donepezil"
+    assert _grounded_in_evidence(he, ev) is True
+
+
+def test_injection_not_grounded_cross_script():
+    from app.generation.generate import _grounded_in_evidence
+
+    class _E:
+        def __init__(self, c): self.content = c
+    ev = [_E("Diagnosis: Dementia, Hip Fracture, COVID-19.")]
+    # an injected Hebrew 'PWNED' shares no script-invariant anchor with the evidence
+    assert _grounded_in_evidence("פוונד שלום עולם בלה בלה", ev) is False
+
+
+def test_offtopic_cross_script_not_grounded():
+    from app.generation.generate import _grounded_in_evidence
+
+    class _E:
+        def __init__(self, c): self.content = c
+    ev = [_E("Diagnosis: Dementia, Hip Fracture, COVID-19.")]
+    assert _grounded_in_evidence("התשובה היא ברלין עם שלושים עובדים", ev) is False

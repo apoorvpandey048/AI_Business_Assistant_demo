@@ -189,7 +189,38 @@ def _grounded_in_evidence(answer: str, evidence: list[Evidence]) -> bool:
     terms = [t for t in content_terms(answer) if len(t) >= 3]
     if not terms:
         return True
-    return any(term_in_text(t, e.content or "") for t in terms for e in evidence)
+    if any(term_in_text(t, e.content or "") for t in terms for e in evidence):
+        return True
+    # Cross-language grounding (Sprint 15): a Hebrew answer grounded in an English passage
+    # (or vice-versa) shares NO content word by script, so the lexical check above fails
+    # even for a perfectly grounded answer. Fall back to SCRIPT-INVARIANT anchors —
+    # numbers, codes, and Latin tokens (medication names, COVID-19, proper nouns) that
+    # survive translation. An injected 'PWNED' still shares none of these with the
+    # evidence, so the injection defense holds.
+    blob = " ".join(e.content or "" for e in evidence)
+    anchors = _shared_anchors(answer, blob)
+    return bool(anchors)
+
+
+# Script-invariant tokens: standalone numbers (88, 12,000), and Latin alnum runs of
+# length >= 3 (COVID, Donepezil, SLA-2025) — the parts of a fact that do NOT change
+# when the surrounding prose is translated between Hebrew and English.
+_ANCHOR_NUM = re.compile(r"\d[\d,\.]{1,}")
+_ANCHOR_LAT = re.compile(r"[A-Za-z][A-Za-z0-9\-]{2,}")
+
+
+def _shared_anchors(answer: str, evidence_blob: str) -> list[str]:
+    ev = (evidence_blob or "").lower()
+    out: list[str] = []
+    for rx in (_ANCHOR_NUM, _ANCHOR_LAT):
+        for m in rx.finditer(answer or ""):
+            tok = m.group(0).lower()
+            # ignore the inline-citation tokens themselves (e1, e2, …)
+            if re.fullmatch(r"e\d+", tok):
+                continue
+            if tok and tok in ev:
+                out.append(tok)
+    return out
 
 
 def _insufficient(question: str, reason_en: str, reason_he: str) -> dict[str, Any]:
