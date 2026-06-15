@@ -244,6 +244,63 @@ class Trace(BaseModel):
     safety_net: bool = False                  # did the document safety net supply evidence?
 
 
+# --- Triage / structured presentation (Features sprint, items 1, 2, 5) -------
+#
+# Two independent user prompts shape an answer:
+#   • role_instructions  — the Role/MVP prompt (persona; tone & emphasis only)
+#   • case_instructions  — the Cases prompt: a user-defined ruleset that sorts the
+#                          entities in an answer into three colour buckets
+#                          (red/green/blue). The MEANING of each colour is whatever
+#                          the user wrote — e.g. "life support → red, fever → green,
+#                          stable → blue". Nothing about severity is hardcoded.
+#
+# Every triage row, timeline event, and table is grounded: it carries the evidence
+# ids that justify it, referencing the SAME Evidence objects as the answer's
+# citations. Ungrounded rows are dropped in generation — never surfaced.
+
+TriageLevel = Literal["red", "green", "blue"]
+
+
+class TriageItem(BaseModel):
+    """One classified entity in the triage view, fully attributed to evidence."""
+
+    label: str                                # entity name as grounded, e.g. "Mohammed Ben"
+    level: TriageLevel                        # red | green | blue — meaning set by the Cases prompt
+    summary: str                              # one-line grounded reason for the bucket
+    evidence_ids: list[str] = Field(default_factory=list)   # [eN] that justify this row
+    rule: Optional[str] = None                # which Cases-prompt rule matched (model's words)
+
+
+class TriagePanel(BaseModel):
+    """The triage view for one answer. ``defined`` is false when no Cases prompt was
+    supplied (the UI then hides the panels entirely). ``legend`` echoes what each
+    colour means per the user's Cases prompt so columns can be labelled truthfully."""
+
+    defined: bool = False
+    legend: dict[str, str] = Field(default_factory=dict)    # {"red": "...", "green": "...", "blue": "..."}
+    items: list[TriageItem] = Field(default_factory=list)
+    note: str = ""                            # e.g. "2 entities could not be classified from the evidence"
+
+
+class TimelineEvent(BaseModel):
+    """One dated, grounded event for the timeline visualization."""
+
+    date: str                                 # display string exactly as grounded in the evidence
+    title: str
+    detail: str = ""
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class AnswerTable(BaseModel):
+    """A structured table extracted alongside the answer so the UI renders a real
+    HTML table instead of ASCII pipes-and-dashes."""
+
+    title: str = ""
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[str]] = Field(default_factory=list)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
 class AskRequest(BaseModel):
     question: str
     developer_mode: bool = True
@@ -255,6 +312,11 @@ class AskRequest(BaseModel):
     # are never hardcoded. Shapes tone/emphasis/analysis only; it can never override
     # grounding, invent evidence, or bypass citations (enforced in generation).
     role_instructions: Optional[str] = None
+    # User-configured triage ruleset (the "Cases prompt"). Free text — e.g. "patients
+    # on life support → red, with fever → green, stable → blue". When present, the
+    # answer is accompanied by a TriagePanel that sorts the entities into the user's
+    # three buckets. Like the role, it can never override grounding or invent evidence.
+    case_instructions: Optional[str] = None
 
 
 class AskResponse(BaseModel):
@@ -263,6 +325,12 @@ class AskResponse(BaseModel):
     insufficient: bool = False
     citations: list[Evidence] = Field(default_factory=list)
     trace: Trace
+    # Structured, grounded presentation alongside the prose answer. All optional and
+    # empty by default, so an answer with no Cases prompt, no dates, and no tabular
+    # data is byte-identical to the pre-sprint response.
+    triage: Optional[TriagePanel] = None      # populated only when case_instructions is given
+    timeline: list[TimelineEvent] = Field(default_factory=list)
+    tables: list[AnswerTable] = Field(default_factory=list)
 
 
 class SourceInfo(BaseModel):
