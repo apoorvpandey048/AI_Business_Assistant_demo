@@ -76,6 +76,9 @@ class DocumentRetrievalTrace(BaseModel):
     search_terms: list[str] = Field(default_factory=list)
     exact_hits: int = 0                       # chunks literally containing a term
     strategy: str = ""                        # plain-English summary for the inspector
+    # coverage-complete retrieval (Zero-Loss sprint, Phase 2)
+    enumeration: bool = False                 # question asked for ALL instances
+    completeness_gaps: list[str] = Field(default_factory=list)  # terms recovered by fill
 
 
 class SqlExecutionTrace(BaseModel):
@@ -120,6 +123,71 @@ class CostSummary(BaseModel):
     total_usd: float = 0.0
     live_calls: int = 0
     note: str = ""
+
+
+class ProviderStatus(BaseModel):
+    """Live diagnostics for the configured inference provider (sprint §13, Task C).
+
+    Surfaced read-only in Settings. `connection`/`health` reflect reality: for the local
+    Ollama provider they come from an actual reachability + model-presence probe; for
+    hosted providers they reflect whether credentials are configured (true liveness is
+    confirmed on the first answer, where the inspector shows mode=live)."""
+    provider: str                       # openai | ollama | anthropic
+    transport: str = ""                 # anthropic | openai-compatible
+    generation_model: str = ""
+    router_model: str = ""
+    sql_model: str = ""
+    embedding_model: str = ""           # active embedding backend label
+    base_url: Optional[str] = None
+    connection: Literal["connected", "disconnected", "unknown"] = "unknown"
+    health: Literal["healthy", "degraded", "unavailable"] = "unavailable"
+    detail: str = ""                    # one-line human-readable status
+    fix: Optional[str] = None           # exact remediation command when not healthy
+    offline: bool = False               # engine is in deterministic offline mode
+    deployment_mode: str = ""           # informational label (Production Recommended / …)
+
+
+class ProviderOption(BaseModel):
+    """A selectable inference provider for the Settings selector (sprint §14)."""
+    name: str                           # openai | ollama | anthropic
+    label: str                          # display name
+    transport: str = ""                 # anthropic | openai-compatible
+    deployment_mode: str = ""           # Production Recommended / Private Local / Advanced
+    description: str = ""               # one-line "what this is / when to use it"
+
+
+class ProvidersResponse(BaseModel):
+    """`GET /providers` — the selector's full state: what's applied vs. the env default,
+    the live status of the applied provider, and the catalog of selectable options."""
+    applied: str                        # the provider calls actually use right now
+    default: str                        # the env/`ABA_PROVIDER` default (server-configured)
+    source: Literal["override", "env"] = "env"   # is `applied` a UI override or the env default?
+    overridden: bool = False
+    status: ProviderStatus
+    options: list[ProviderOption] = Field(default_factory=list)
+
+
+class ProviderSwitchRequest(BaseModel):
+    """`POST /provider` body — switch the active inference provider at runtime."""
+    provider: str                       # openai | ollama | anthropic
+
+
+class ProviderCheck(BaseModel):
+    """One post-switch validation probe (sprint §14, Workstream 5)."""
+    name: Literal["health", "routing", "generation", "embeddings"]
+    status: Literal["pass", "fail", "skipped"]
+    detail: str = ""
+    fix: Optional[str] = None
+    duration_ms: float = 0.0
+
+
+class ProviderValidation(BaseModel):
+    """Result of validating the active provider end-to-end: health + routing + generation +
+    embeddings. `ok` is true when no check FAILED (skipped/offline checks don't fail)."""
+    provider: str
+    ok: bool = True
+    summary: str = ""
+    checks: list[ProviderCheck] = Field(default_factory=list)
 
 
 class StageTiming(BaseModel):
@@ -203,7 +271,9 @@ class SourceInfo(BaseModel):
     title: str
     description: str
     capabilities: list[str] = Field(default_factory=list)
-    status: Literal["active", "future"] = "active"
+    # "active" = connected with user data; "empty" = available but nothing uploaded yet;
+    # "future" = roadmap connector shown for extensibility.
+    status: Literal["active", "empty", "future"] = "active"
     details: dict[str, Any] = Field(default_factory=dict)
 
 

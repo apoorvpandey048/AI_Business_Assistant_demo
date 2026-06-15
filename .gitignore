@@ -16,6 +16,9 @@ data/cache/
 # Runtime customer uploads (PDFs / SQLite) + the merged working DB — session-scoped, never committed.
 data/uploads/
 
+# Runtime provider override written by the Settings provider switch (sprint §14) — host-specific.
+data/runtime/
+
 # Node / Next
 ui/node_modules/
 ui/.next/

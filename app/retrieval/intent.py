@@ -266,6 +266,29 @@ def is_document_lookup(query: str) -> bool:
     return has_container or has_lookup
 
 
+# Enumeration cues — a question that asks for EVERY instance of something ("list all
+# incidents", "what medications", "how many transfers", "כל התרופות"). These must not
+# be answered from a top-k-trimmed evidence set: completeness, not the single best
+# passage, is the whole point. English cues + Hebrew "כל" (all/every) and "כמה" (how
+# many, already a question word but doubles as an enumeration trigger here).
+_ENUM_EN = re.compile(
+    r"\b(all|every|each|list|enumerate|complete|entire|full)\b"
+    r"|\bhow\s+many\b|\bevery\s+single\b",
+    re.I,
+)
+_ENUM_HE = re.compile(r"כל\s|כמה\b|רשימת|כל\s+ה|כלל\s")
+
+
+def is_enumeration(query: str) -> bool:
+    """True when the question asks for ALL instances of something — so retrieval must
+    return the complete set of matching passages rather than the top-k. Deterministic
+    and bilingual (English cues + Hebrew כל/כמה/רשימת)."""
+    q = query or ""
+    if _HEB_RE.search(q):
+        return bool(_ENUM_HE.search(q))
+    return bool(_ENUM_EN.search(q))
+
+
 def text_hits(text: str, gate_terms: list[str]) -> bool:
     """True if the chunk text literally contains any gate term (case-insensitive,
     Hebrew-prefix tolerant)."""

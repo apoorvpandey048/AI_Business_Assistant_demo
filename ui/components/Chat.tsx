@@ -2,6 +2,7 @@
 import React from "react";
 import type { AskResponse, Inventory } from "@/lib/types";
 import { Button, Card, EmptyState, Icons, Pill, isRTL } from "./ui";
+import { roleLabel } from "@/lib/role";
 import AnswerPanel from "./AnswerPanel";
 
 export default function Chat({
@@ -42,11 +43,15 @@ export default function Chat({
         <button onClick={onOpenSources} className="font-medium text-indigo-600 hover:text-indigo-700">
           Manage sources
         </button>
-        {role.trim() && (
-          <button onClick={onOpenSettings} className="ml-auto" title="Configured in Settings">
-            <Pill tone="indigo"><Icons.spark className="h-3 w-3" />Analysis mode active</Pill>
-          </button>
-        )}
+        {/* The active analysis mode is always visible — "General" when none is set —
+            so the user never has to open Settings to know what is shaping answers. */}
+        <button onClick={onOpenSettings} className="ml-auto" title="Change in Settings">
+          {role.trim() ? (
+            <Pill tone="indigo"><Icons.spark className="h-3 w-3" />Analysis mode: {roleLabel(role)}</Pill>
+          ) : (
+            <Pill tone="slate">Analysis mode: General</Pill>
+          )}
+        </button>
       </div>
 
       <Card className="p-3">

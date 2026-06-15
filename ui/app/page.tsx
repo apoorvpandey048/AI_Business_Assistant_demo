@@ -5,7 +5,8 @@ import {
   ingestPdf, ingestSqlite, resetWorkspace,
 } from "@/lib/api";
 import type { AppConfig, AskResponse, Inventory, SourceInfo } from "@/lib/types";
-import { Icons, Tabs, cn } from "@/components/ui";
+import { Icons, Tabs, Toasts, cn, type ToastItem } from "@/components/ui";
+import { roleLabel } from "@/lib/role";
 import Chat from "@/components/Chat";
 import Sources from "@/components/Sources";
 import Inspector from "@/components/Inspector";
@@ -25,14 +26,32 @@ export default function Page() {
   const [error, setError] = React.useState<string | null>(null);
   const [connecting, setConnecting] = React.useState(true);
 
-  // User-configured analysis mode (persona), persisted locally. Sent with every ask.
+  // Visual feedback: every state-changing action raises a toast (no silent changes).
+  const [toasts, setToasts] = React.useState<ToastItem[]>([]);
+  const toastSeq = React.useRef(0);
+  const dismissToast = (id: number) => setToasts((ts) => ts.filter((t) => t.id !== id));
+  const pushToast = React.useCallback((message: string, tone: ToastItem["tone"] = "success") => {
+    const id = ++toastSeq.current;
+    setToasts((ts) => [...ts.slice(-2), { id, message, tone }]);
+    setTimeout(() => dismissToast(id), 4000);
+  }, []);
+
+  // User-configured analysis mode (persona). Only the SAVED value is applied to
+  // questions; Settings edits a draft and commits via Save. Persisted in this browser.
   const [role, setRole] = React.useState("");
   React.useEffect(() => {
     try { setRole(window.localStorage.getItem("aba.role") || ""); } catch { /* ignore */ }
   }, []);
-  const updateRole = (r: string) => {
-    setRole(r);
-    try { window.localStorage.setItem("aba.role", r); } catch { /* ignore */ }
+  const saveRole = (r: string) => {
+    const next = r.trim();
+    setRole(next);
+    try { window.localStorage.setItem("aba.role", next); } catch { /* ignore */ }
+    pushToast(next ? `Analysis mode saved — active as “${roleLabel(next)}”.` : "Analysis mode cleared — back to General.");
+  };
+  const clearRole = () => {
+    setRole("");
+    try { window.localStorage.removeItem("aba.role"); } catch { /* ignore */ }
+    pushToast("Analysis mode cleared — back to General.");
   };
 
   // Monotonic request token: a response (or retry) from a superseded question can
@@ -109,6 +128,11 @@ export default function Page() {
     fetchSources().then(setSources).catch(() => {});
   };
 
+  // After a provider switch, re-pull /config so the top-bar mode + model reflect reality.
+  const refreshConfig = React.useCallback(() => {
+    fetchConfig().then(setConfig).catch(() => {});
+  }, []);
+
   const clearQuestion = () => {
     askSeq.current += 1;                   // invalidate any in-flight request
     setQuestion("");
@@ -123,11 +147,18 @@ export default function Page() {
       const res = await ingestPdf(files);
       setInventory(res.inventory);
       const failed = res.documents.filter((d) => d.status === "error");
-      if (failed.length) setPdfErr(failed.map((f) => `${f.name}: ${f.error || "failed"}`).join("; "));
-      else setPdfMsg(res.message);
+      if (failed.length) {
+        const err = failed.map((f) => `${f.name}: ${f.error || "failed"}`).join("; ");
+        setPdfErr(err);
+        pushToast(`PDF upload failed — ${err}`, "error");
+      } else {
+        setPdfMsg(res.message);
+        pushToast(res.message);
+      }
       refreshSources();
     } catch (e: any) {
       setPdfErr(e?.message || "Upload failed.");
+      pushToast(`PDF upload failed — ${e?.message || "unknown error"}`, "error");
     } finally {
       setPdfBusy(false);
     }
@@ -139,11 +170,18 @@ export default function Page() {
       const res = await ingestSqlite(files);
       setInventory(res.inventory);
       const failed = res.databases.filter((d) => d.status === "error");
-      if (failed.length) setDbErr(failed.map((f) => `${f.name}: ${f.error || "failed"}`).join("; "));
-      else setDbMsg(res.message);
+      if (failed.length) {
+        const err = failed.map((f) => `${f.name}: ${f.error || "failed"}`).join("; ");
+        setDbErr(err);
+        pushToast(`Database upload failed — ${err}`, "error");
+      } else {
+        setDbMsg(res.message);
+        pushToast(res.message);
+      }
       refreshSources();
     } catch (e: any) {
       setDbErr(e?.message || "Upload failed.");
+      pushToast(`Database upload failed — ${e?.message || "unknown error"}`, "error");
     } finally {
       setSqliteBusy(false);
     }
@@ -158,8 +196,9 @@ export default function Page() {
       setResp(null); setQuestion(""); setError(null);
       setPdfMsg(null); setPdfErr(null); setDbMsg(null); setDbErr(null);
       refreshSources();
+      pushToast("Workspace cleared — all uploaded sources and the conversation were removed.");
     } catch {
-      /* ignore */
+      pushToast("Could not clear the workspace — please try again.", "error");
     } finally {
       setResetting(false);
     }
@@ -240,11 +279,16 @@ export default function Page() {
         {tab === "inspector" && <Inspector resp={resp} />}
         {tab === "settings" && (
           <Settings
-            role={role} setRole={updateRole} config={config} sources={sources}
+            role={role} onSaveRole={saveRole} onClearRole={clearRole}
+            config={config} sources={sources}
             onReset={handleReset} resetting={resetting} hasUploads={hasUploads}
+            onOpenSources={() => setTab("sources")}
+            pushToast={pushToast} onRefreshConfig={refreshConfig}
           />
         )}
       </main>
+
+      <Toasts items={toasts} onDismiss={dismissToast} />
 
       <footer className="mx-auto max-w-7xl px-5 pb-8 pt-4 text-center text-[11px] leading-relaxed text-slate-400">
         Documents + databases · query routing · hybrid retrieval (dense + BM25 + RRF + rerank) ·

@@ -229,6 +229,37 @@ export function ScoreBar({ value, max = 1 }: { value?: number | null; max?: numb
   );
 }
 
+/* ---------------- toasts (visual feedback for every state change) ---------------- */
+export interface ToastItem {
+  id: number;
+  message: string;
+  tone: "success" | "error" | "info";
+}
+
+export function Toasts({ items, onDismiss }: { items: ToastItem[]; onDismiss: (id: number) => void }) {
+  if (items.length === 0) return null;
+  const tones: Record<ToastItem["tone"], { box: string; icon: React.ReactNode }> = {
+    success: { box: "ring-emerald-200 text-emerald-800", icon: <Icons.check className="h-4 w-4 text-emerald-500" /> },
+    error: { box: "ring-rose-200 text-rose-700", icon: <Icons.alert className="h-4 w-4 text-rose-500" /> },
+    info: { box: "ring-slate-200 text-slate-700", icon: <Icons.info className="h-4 w-4 text-slate-400" /> },
+  };
+  return (
+    <div className="pointer-events-none fixed bottom-5 left-1/2 z-50 flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4">
+      {items.map((t) => (
+        <div key={t.id} role="status"
+          className={cn("pointer-events-auto flex w-full items-start gap-2 rounded-xl bg-white px-3.5 py-2.5",
+            "text-[12.5px] font-medium shadow-lg ring-1 ring-inset", tones[t.tone].box)}>
+          <span className="mt-0.5 shrink-0">{tones[t.tone].icon}</span>
+          <span className="min-w-0 flex-1">{t.message}</span>
+          <button onClick={() => onDismiss(t.id)} className="shrink-0 text-slate-300 hover:text-slate-500" aria-label="Dismiss">
+            <Icons.x className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ---------------- empty state ---------------- */
 export function EmptyState({
   icon, title, children,

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 import time
+import logging
 from functools import lru_cache
 from pathlib import Path
 
@@ -25,6 +26,20 @@ from app.routing.orchestrator import Orchestrator
 from app.sources.crm_source import CrmSource
 from app.sources.document_source import DocumentSource
 from app.sources.structured_source import StructuredSource
+
+logger = logging.getLogger("aba.engine")
+
+# Stable per-row key for entity indexing — prefers a human-meaningful reference column,
+# falls back to the table's surrogate id. Mirrors structured_source._row_key intent.
+_ROW_KEY_COLS = ("invoice_ref", "contract_ref", "project_ref", "sla_ref", "name",
+                 "customer", "title")
+
+
+def _row_key_for(row: dict) -> str:
+    for c in _ROW_KEY_COLS:
+        if row.get(c) is not None:
+            return str(row[c])
+    return str(row.get("id", "?"))
 
 
 class Engine:
@@ -52,6 +67,11 @@ class Engine:
         self._seed_table_names: set[str] = set(schema.table_names())
         self.relational_source = StructuredSource(s.db_path, schema)
 
+        # Cross-source entity graph: feed the DB rows + document-owner links into the
+        # document index so structured (CRM) facts and cross-source identities
+        # participate in entity / graph retrieval (Zero-Loss Phase 3).
+        self._index_relational_into_graph(index, self.relational_source)
+
         # per-source inventory (sample data is pre-loaded)
         self._documents: list[IngestedDocumentInfo] = [
             _doc_info_from_ingested(ingest_pdf(p), origin="sample")
@@ -65,6 +85,42 @@ class Engine:
 
     def _rebuild_orchestrator(self) -> None:
         self.orchestrator = Orchestrator(self.document_source, self.relational_source)
+
+    def _index_relational_into_graph(self, index, relational) -> None:
+        """Feed every row of the relational source into the document index's entity
+        index + knowledge graph, plus a document→owner map from rows that reference a
+        file. This is what brings the SQLite 'CRM' under the same no-loss guarantee:
+        DB-only facts become entities, and an entity present in BOTH a PDF and a row
+        becomes a cross-source bridge. Best-effort and fully offline — any failure
+        leaves document-only retrieval working unchanged."""
+        if not getattr(index.s, "enable_entity_graph", False):
+            return
+        try:
+            import sqlite3
+
+            owner_map: dict[str, str] = {}
+            conn = sqlite3.connect(relational.db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                for table in relational.schema.table_names():
+                    try:
+                        rows = [dict(r) for r in conn.execute(f"SELECT * FROM {table}")]
+                    except Exception:
+                        continue
+                    if not rows:
+                        continue
+                    index.index_rows(table, rows, key_for=_row_key_for)
+                    for r in rows:
+                        doc = r.get("pdf_file") or r.get("doc_file")
+                        owner = r.get("name") or r.get("customer") or r.get("title")
+                        if doc and owner:
+                            owner_map.setdefault(str(doc), str(owner))
+            finally:
+                conn.close()
+            index.set_owner_map(owner_map)
+            index.refresh_graph()
+        except Exception:
+            logger.warning("entity-graph relational indexing skipped", exc_info=True)
 
     # -- runtime ingestion -------------------------------------------------
     def add_pdf(self, filename: str, path: Path) -> IngestedDocumentInfo:
@@ -131,6 +187,9 @@ class Engine:
                     )
                 schema = introspect(self._working_db_path)
                 self.relational_source = StructuredSource(self._working_db_path, schema)
+                # Bring the newly-merged rows under the cross-source entity graph.
+                self._index_relational_into_graph(
+                    self.document_source.index, self.relational_source)
                 self._rebuild_orchestrator()
 
                 cols_by_table = {t.name: [c.name for c in t.columns] for t in schema.tables}
@@ -181,11 +240,24 @@ class Engine:
 
     @property
     def sources(self) -> list[SourceInfo]:
-        return [
-            self.document_source.describe(),
-            self.relational_source.describe(),
-            CrmSource().describe(),
-        ]
+        """The client-facing source list (Settings → Connected sources).
+
+        Built from the live workspace inventory — only what the user actually
+        uploaded counts as connected; the bundled sample corpus is an evaluation
+        artifact and must never display as a connected source. The router keeps
+        using each source object's full ``describe()`` internally; this changes
+        only what the client sees.
+        """
+        with self._lock:
+            docs = [d for d in self._documents
+                    if d.origin == "uploaded" and d.status == "indexed"]
+            dbs = [d for d in self._databases
+                   if d.origin == "uploaded" and d.status == "indexed"]
+            return [
+                _workspace_documents_info(docs),
+                _workspace_database_info(dbs),
+                CrmSource().describe(),
+            ]
 
     def ask(self, question: str, scope: str = "all",
             role_instructions: str | None = None):
@@ -245,6 +317,70 @@ class Engine:
                 e.origin = doc_origin.get(e.document)
             elif e.source_kind == "relational" and e.table:
                 e.origin = tbl_origin.get(e.table)
+
+
+# -- client-facing source descriptions ---------------------------------------
+
+def _workspace_documents_info(docs: list[IngestedDocumentInfo]) -> SourceInfo:
+    names = [d.name for d in docs]
+    shown = ", ".join(names[:12]) + (" …" if len(names) > 12 else "")
+    if docs:
+        description = (
+            f"{len(docs)} uploaded document(s) whose full text is searchable: {shown}."
+        )
+    else:
+        description = ("No documents uploaded yet. Add PDFs under Sources to make "
+                       "their full text searchable.")
+    languages = sorted({lg for d in docs for lg in d.languages})
+    return SourceInfo(
+        name="documents", kind="documents",
+        title="Documents (PDF)",
+        description=description,
+        capabilities=[
+            "full-text search across every uploaded PDF — names, dates, amounts, "
+            "clauses, and narrative content",
+            f"documents: {shown or 'none'}",
+        ],
+        status="active" if docs else "empty",
+        details={
+            "documents": names,
+            "languages": languages,
+            "chunks": sum(d.chunks_indexed for d in docs),
+        },
+    )
+
+
+def _workspace_database_info(dbs: list[IngestedDatabaseInfo]) -> SourceInfo:
+    tables = [t for d in dbs for t in d.tables]
+    if dbs:
+        table_lines = []
+        for t in tables[:12]:
+            cols = ", ".join(t.columns[:8]) + ("" if len(t.columns) <= 8 else ", …")
+            table_lines.append(f"{t.name}({cols})")
+        summary = "; ".join(table_lines) + (" …" if len(tables) > 12 else "")
+        description = (
+            f"{len(dbs)} uploaded database(s) with {len(tables)} registered "
+            f"table(s): {summary}."
+        )
+    else:
+        description = ("No database uploaded yet. Add a SQLite file under Sources "
+                       "to query its tables.")
+    return SourceInfo(
+        name="database", kind="relational",
+        title="Database (SQLite)",
+        description=description,
+        capabilities=[
+            "counts, sums, averages, filters, ranking and aggregation over the "
+            "registered tables",
+            f"available tables: {', '.join(t.name for t in tables) or 'none'}",
+        ],
+        status="active" if dbs else "empty",
+        details={
+            "databases": [d.name for d in dbs],
+            "tables": [t.name for t in tables],
+            "total_rows": sum(d.total_rows for d in dbs),
+        },
+    )
 
 
 # -- inventory helpers -------------------------------------------------------

@@ -11,10 +11,13 @@ from app.config import get_settings
 from app.llm.embeddings import EmbeddingModel
 from app.models import DocumentRetrievalTrace, Evidence, RetrievalCandidate
 from app.retrieval.bm25 import BM25Index
-from app.retrieval.fusion import reciprocal_rank_fusion
+from app.retrieval.entity_index import EntityIndex
+from app.retrieval.fusion import weighted_rank_fusion
+from app.retrieval.graph import Graph, build_graph
+from app.retrieval.graph_retriever import graph_expand
 from app.retrieval.intent import (QueryIntent, aspect_groups, content_terms,
-                                  detect_intent, is_document_lookup, term_in_text,
-                                  text_hits)
+                                  detect_intent, is_document_lookup, is_enumeration,
+                                  term_in_text, text_hits)
 from app.retrieval.rerank import Reranker
 from app.retrieval.vector_store import VectorStore, make_vector_store
 
@@ -34,6 +37,14 @@ class DocumentIndex:
         self.reranker = (
             Reranker.get(self.s.reranker_model) if self.s.enable_rerank else None
         )
+        # Entity index + knowledge graph (Phase 3). The index maps entity → chunks (and,
+        # once fed by the engine, → DB rows); the graph adds co-occurrence / ownership /
+        # cross-source links. Both are optional and rebuilt at (re)build time.
+        self.entities = EntityIndex()
+        self.graph: Optional[Graph] = None
+        # owner_map (document → owning entity) is injected by the engine from SQL rows;
+        # kept here so a graph rebuild after add_chunks preserves the ownership edges.
+        self._owner_map: dict[str, str] = {}
 
     # -- build --------------------------------------------------------------
     def build(self, chunks: list[dict[str, Any]]) -> None:
@@ -43,6 +54,35 @@ class DocumentIndex:
         vectors = self._embed_cached(texts)
         self.store.add(ids, vectors)
         self.bm25.build(ids, texts)
+        self._build_entity_graph()
+
+    def _build_entity_graph(self) -> None:
+        """(Re)build the entity index + knowledge graph over the current chunk corpus.
+        Cheap, deterministic, offline. Preserves any engine-supplied row entities /
+        owner map by re-applying them is the engine's responsibility (it calls
+        ``index_rows`` / ``set_owner_map`` then ``refresh_graph``)."""
+        if not self.s.enable_entity_graph:
+            return
+        self.entities = EntityIndex()
+        self.entities.add_chunks(self.chunks.values())
+        self.refresh_graph()
+
+    def refresh_graph(self) -> None:
+        if self.s.enable_entity_graph:
+            self.graph = build_graph(self.entities, self.chunks, self._owner_map)
+
+    def index_rows(self, table: str, rows: list[dict[str, Any]],
+                   key_for) -> None:
+        """Feed structured (CRM/SQLite) rows into the entity index so DB-only facts and
+        cross-source identities participate in graph retrieval. ``key_for(row)`` returns
+        the row's stable key. The caller calls ``refresh_graph`` afterwards."""
+        if not self.s.enable_entity_graph:
+            return
+        for row in rows:
+            self.entities.add_row(table, str(key_for(row)), row)
+
+    def set_owner_map(self, owner_map: dict[str, str]) -> None:
+        self._owner_map = dict(owner_map or {})
 
     def add_chunks(self, new_chunks: list[dict[str, Any]]) -> int:
         """Index additional chunks at runtime (uploaded PDFs) without re-embedding the
@@ -62,6 +102,11 @@ class DocumentIndex:
         all_ids = list(self.chunks)
         all_texts = [self.chunks[i]["text"] for i in all_ids]
         self.bm25.build(all_ids, all_texts)
+        # New chunks bring new entities; fold them into the index and rebuild the graph
+        # so an uploaded PDF immediately participates in entity / graph retrieval.
+        if self.s.enable_entity_graph:
+            self.entities.add_chunks(fresh)
+            self.refresh_graph()
         return len(fresh)
 
     def _embed_cached(self, texts: list[str]) -> np.ndarray:
@@ -129,6 +174,16 @@ class DocumentIndex:
         allowed = self._allowed_ids(filters)
         intent = intent or detect_intent(query)
 
+        # ENUMERATION ("list every incident", "how many transfers", "כל התרופות"):
+        # completeness, not the single best passage, is the point. Such a question may
+        # return up to `coverage_max_k` passages instead of `final_k`, and its weak-tail
+        # trim is relaxed (see _semantic_select / keyword path below). A plain
+        # single-fact question is unaffected — enumerating is False — so the precision
+        # batteries see identical evidence.
+        enumerating = is_enumeration(query)
+        cap = min(self.s.coverage_max_k, len(self.chunks) or self.s.coverage_max_k) \
+            if enumerating else final_k
+
         # Exact keyword hits: chunks that literally contain a distinctive search term.
         # Computed up front because a keyword intent with ZERO hits decides the strategy.
         hit_ids: set[str] = set()
@@ -177,7 +232,16 @@ class DocumentIndex:
         # extra phrasings (e.g. the user's original question when the router rewrote
         # it): each contributes its own dense + bm25 ranked lists to the fusion
         rankings = [[c for c, _ in dense], [c for c, _ in bm25]]
-        extras = [q2 for q2 in (extra_queries or [])
+        caller_extras = list(extra_queries or [])
+        # Query expansion (Phase 2): for an enumeration, derive deterministic per-aspect
+        # sub-phrasings so each part of a "list every X / what are all the Y" question
+        # gets its own ranked list and nothing is under-weighted. Gated on `enumerating`
+        # so a plain single-fact question's fusion (and the precision batteries) are
+        # unchanged. RRF keeps any one phrasing from dominating.
+        if self.s.enable_query_expansion and enumerating:
+            from app.retrieval.expand import expand_queries
+            caller_extras = expand_queries(query, caller_extras)
+        extras = [q2 for q2 in caller_extras
                   if q2 and q2.strip() and q2.strip() != search_q.strip()]
         for q2 in extras:
             d2 = self.store.search(self.embedder.embed_one(q2), self.s.dense_top_k,
@@ -187,8 +251,21 @@ class DocumentIndex:
                 b2 = [(cid, sc) for cid, sc in b2 if cid in allowed]
             rankings += [[c for c, _ in d2], [c for c, _ in b2]]
 
-        # 3) RRF fusion (always computed — drives the semantic path and the inspector)
-        fused = reciprocal_rank_fusion(rankings, k=self.s.rrf_k)
+        # 3) RRF fusion (always computed — drives the semantic path and the inspector).
+        # Each ranked list gets weight 1.0; the optional graph ranking joins at a lower
+        # weight so connected-fact recall adds to, but never out-votes, dense+BM25.
+        weighted = [(r, 1.0) for r in rankings]
+        graph_ranked: list[str] = []
+        if self.s.enable_entity_graph and self.graph is not None:
+            graph_ranked = graph_expand(
+                query, self.graph, self.entities,
+                hops=self.s.graph_hops, limit=self.s.graph_expand_limit)
+            if allowed is not None:
+                graph_ranked = [c for c in graph_ranked if c in allowed]
+            graph_ranked = [c for c in graph_ranked if c in self.chunks]
+            if graph_ranked:
+                weighted.append((graph_ranked, self.s.graph_fusion_weight))
+        fused = weighted_rank_fusion(weighted, k=self.s.rrf_k)
         # stable tie-break by chunk id so equal fusion scores rank identically in
         # every process (a tie at the selection boundary must not flicker)
         fused_order = sorted(fused, key=lambda c: (-fused[c], c))
@@ -206,13 +283,21 @@ class DocumentIndex:
                 return (-bm25_score.get(cid, 0.0), -dense_score.get(cid, 0.0),
                         -fused.get(cid, 0.0), cid)
             order = sorted(hit_ids, key=kkey)
-            selected = order[:final_k]
+            # Coverage-complete: an enumeration returns ALL exact matches (up to the
+            # corpus-bounded cap), never a silent top-final_k cut that drops real hits.
+            selected = order[:cap]
             used_mode = "keyword"
-            strategy = f"{intent.reason} {len(hit_ids)} exact match(es); other passages excluded."
+            kept_note = (f" Returning all {len(selected)} match(es) (enumeration)."
+                         if enumerating and len(order) > final_k else
+                         "; other passages excluded.")
+            strategy = f"{intent.reason} {len(hit_ids)} exact match(es);{kept_note}"
         else:
             # SEMANTIC path: hybrid + optional rerank, then trim the weak tail.
             used_mode = "semantic"
             strategy = intent.reason
+            if enumerating:
+                strategy += (" Enumeration — returning the complete set of on-topic "
+                             "passages (coverage over top-k).")
             if not fused:
                 return [], self._empty_trace(query, filters, intent, used_mode, strategy)
 
@@ -225,7 +310,7 @@ class DocumentIndex:
                     rerank_scores = scored
             order = sorted(fused_order,
                            key=lambda c: (-rerank_scores.get(c, fused[c]), c))
-            selected = self._semantic_select(order, fused, final_k)
+            selected = self._semantic_select(order, fused, cap, enumerating=enumerating)
 
             # ASPECT QUOTA — a compound question ("penalties AND suspension terms")
             # must not fill every slot with its dominant aspect while the other
@@ -242,7 +327,7 @@ class DocumentIndex:
                 groups = [terms] if terms else []
             if groups:
                 selected, promoted = self._apply_aspect_quota(selected, order,
-                                                              groups, final_k)
+                                                              groups, cap)
                 if promoted:
                     strategy += (f" Coverage quota: promoted {promoted} passage(s) so "
                                  f"each part of the question is represented.")
@@ -284,7 +369,7 @@ class DocumentIndex:
                 for a in dict.fromkeys(anchors):
                     if a in selected:
                         continue
-                    if len(selected) < final_k:
+                    if len(selected) < cap:
                         selected.append(a)
                     else:
                         repl = min((c for c in selected if c not in anchors),
@@ -297,6 +382,24 @@ class DocumentIndex:
                     strategy += (" Question anchor: included the top passage(s) for "
                                  "the original question alongside the rewritten query's.")
 
+        # COMPLETENESS VERIFY → FILL — "no facts missed". After selection, check whether
+        # any distinctive term the question is about is covered by NO selected passage,
+        # and recover the best passage that contains it. Gated to ENUMERATION queries:
+        # those explicitly ask for the complete set, so adopting an extra on-topic
+        # passage is always correct. On a non-enumeration question the fill must NOT
+        # fire — forcing a passage for an uncovered term would defeat the honest-decline
+        # path (a question that should return "insufficient evidence" must not be handed
+        # a chunk just because it shares a word), the grounding-battery contract.
+        # Aspect-quota + holistic-anchor already give non-enumeration coverage.
+        completeness_gaps: list[str] = []
+        if self.s.enable_completeness_check and enumerating and selected:
+            filled, completeness_gaps = self._fill_gaps(
+                query, selected, fused, bm25_score, dense_score, allowed, cap)
+            if filled:
+                selected += filled
+                strategy += (f" Completeness check: recovered {len(filled)} passage(s) "
+                             f"for question term(s) no selected passage covered.")
+
         def score_of(cid: str) -> Optional[float]:
             return rerank_scores.get(cid, fused.get(cid, 0.0))
 
@@ -305,7 +408,7 @@ class DocumentIndex:
 
         # 4) candidates (inspector) — the considered set with full scoring + hit flag
         candidates: list[RetrievalCandidate] = []
-        for cid in order[: max(self.s.rerank_top_n, final_k)]:
+        for cid in order[: max(self.s.rerank_top_n, cap)]:
             c = self.chunks[cid]
             candidates.append(RetrievalCandidate(
                 chunk_id=cid, document=c["document"], page=c.get("page"),
@@ -338,6 +441,7 @@ class DocumentIndex:
             params=self._params(), candidates=candidates,
             intent=used_mode, search_terms=intent.terms or intent.gate_terms,
             exact_hits=len(hit_ids), strategy=strategy,
+            enumeration=enumerating, completeness_gaps=completeness_gaps,
         )
         return evidence, trace
 
@@ -403,15 +507,59 @@ class DocumentIndex:
                 return cid
         return sel[-1] if sel and sel[-1] != keep else None
 
+    def _fill_gaps(
+        self, query: str, selected: list[str], fused: dict[str, float],
+        bm25_score: dict[str, float], dense_score: dict[str, float],
+        allowed: Optional[set[str]], cap: int,
+    ) -> tuple[list[str], list[str]]:
+        """Targeted recovery for the completeness check. For each question term that no
+        selected passage covers, find the best-ranked unselected chunk that literally
+        contains it and adopt it. Bounded by `completeness_max_passes` gap terms; never
+        exceeds the coverage cap. Returns ``(chunks_to_append, gap_terms_recovered)``."""
+        from app.retrieval.completeness import find_gaps
+
+        sel_texts = [self.chunks[c]["text"] for c in selected]
+        gaps = find_gaps(query, sel_texts)
+        if not gaps:
+            return [], []
+        sel_set = set(selected)
+        scope = allowed if allowed is not None else set(self.chunks)
+        out: list[str] = []
+        recovered: list[str] = []
+        for term in gaps[: self.s.completeness_max_passes]:
+            if len(selected) + len(out) >= cap:
+                break
+            cands = [cid for cid in scope
+                     if cid not in sel_set and cid not in out
+                     and term_in_text(term, self.chunks[cid]["text"])]
+            if not cands:
+                continue                       # term genuinely absent from the corpus
+            # prefer the passage that ranked best across the fusion / lexical signals;
+            # chunk id breaks ties so the pick is deterministic across processes
+            best = max(cands, key=lambda c: (fused.get(c, 0.0), bm25_score.get(c, 0.0),
+                                             dense_score.get(c, 0.0), c))
+            out.append(best)
+            recovered.append(term)
+        return out, recovered
+
     def _semantic_select(
-        self, order: list[str], fused: dict[str, float], final_k: int
+        self, order: list[str], fused: dict[str, float], final_k: int,
+        enumerating: bool = False,
     ) -> list[str]:
         """Keep passages within `keep_ratio` of the top fusion score (trim the clearly
-        weaker tail), but never fewer than `min_keep`, never more than `final_k`."""
+        weaker tail), but never fewer than `min_keep`, never more than `final_k`.
+
+        For an ENUMERATION the relevance floor is relaxed (a wider keep_ratio) so the
+        complete set of on-topic passages survives — completeness is the goal, and the
+        absolute junk floor `min_evidence_score` still removes noise. `final_k` here is
+        the coverage cap passed by the caller."""
         if not order:
             return []
         top = max(fused.get(order[0], 0.0), 1e-9)
-        floor = max(top * self.s.semantic_keep_ratio, self.s.min_evidence_score)
+        ratio = self.s.semantic_keep_ratio
+        if enumerating:
+            ratio = min(ratio, 0.12)       # widen the keep band for full coverage
+        floor = max(top * ratio, self.s.min_evidence_score)
         kept: list[str] = []
         for i, cid in enumerate(order):
             if len(kept) >= final_k:
