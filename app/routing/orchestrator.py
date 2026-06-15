@@ -301,11 +301,25 @@ class Orchestrator:
             )
             return []
         if not _on_topic(question, ev):
-            trace.notes.append(
-                "Safety net — a direct document search returned only off-topic passages "
-                "(no shared keyword with the question); declining to ground an answer."
-            )
-            return []
+            # Lexical gate failed. If the question and the recovered evidence are in
+            # different scripts (cross-language), a shared-word test is structurally
+            # impossible — fall back to a semantic relevance check on the dense score so
+            # a genuine cross-language hit is not discarded (R1 / Hebrew-parity). A truly
+            # off-topic cross-language query still fails the dense floor and is declined.
+            if (self._cross_language_enabled() and _is_cross_script(question, ev)
+                    and _cross_script_relevant(ev, dtrace,
+                                               get_settings().cross_language_min_dense)):
+                trace.notes.append(
+                    "Safety net — cross-language recovery: top passage is in a different "
+                    "script from the question but semantically relevant (dense score above "
+                    "floor); adopting it (answer language enforced at generation)."
+                )
+            else:
+                trace.notes.append(
+                    "Safety net — a direct document search returned only off-topic passages "
+                    "(no shared keyword with the question); declining to ground an answer."
+                )
+                return []
 
         trace.notes.append(
             f"Safety net — router returned no document evidence (route {decision.route}), but "
@@ -594,6 +608,40 @@ def _on_topic(question: str, evidence: list[Evidence]) -> bool:
         if any(term_in_text(t, text) for t in terms):
             return True
     return False
+
+
+def _is_cross_script(question: str, evidence: list[Evidence]) -> bool:
+    """True when the question and the top recovered passage are in DIFFERENT scripts
+    (Hebrew vs Latin). In that case the lexical _on_topic gate cannot possibly pass
+    (no shared surface token), so the caller must fall back to a semantic relevance
+    check instead of discarding genuinely-relevant cross-language evidence."""
+    if not evidence:
+        return False
+    q_he = bool(_HEB_CHARS.search(question or ""))
+    top = evidence[0].content or ""
+    ev_he = bool(_HEB_CHARS.search(top))
+    # cross-script when one side is Hebrew and the other has no Hebrew at all
+    return q_he != ev_he
+
+
+def _cross_script_relevant(evidence: list[Evidence], dtrace, floor: float) -> bool:
+    """Semantic relevance gate for cross-language recoveries: the top recovered passage's
+    DENSE (embedding) score must clear ``floor``. RRF/lexical scores are useless here
+    (an off-topic chunk can out-rank by surface frequency), but the dense score cleanly
+    separates a real cross-language hit (~0.5+) from noise (~0.33) — measured on the real
+    corpus. Returns True (trust generation) if no dense score is available."""
+    cands = getattr(dtrace, "candidates", None) or []
+    if not cands:
+        return True
+    ev_ids = {e.chunk_id for e in evidence[:3] if e.chunk_id}
+    scores = [c.dense_score for c in cands
+              if c.chunk_id in ev_ids and c.dense_score is not None]
+    if not scores:
+        # fall back to the global top dense score across candidates
+        scores = [c.dense_score for c in cands if c.dense_score is not None]
+    if not scores:
+        return True
+    return max(scores) >= floor
 
 
 def _documents_from_rows(rows: list[dict]) -> list[str]:
