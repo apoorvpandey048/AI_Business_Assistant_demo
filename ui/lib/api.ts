@@ -33,13 +33,19 @@ export async function fetchInventory(): Promise<Inventory> {
 export type AskScope = "workspace" | "all";
 
 export async function ask(
-  question: string, scope: AskScope = "workspace", roleInstructions?: string,
+  question: string, scope: AskScope = "workspace",
+  roleInstructions?: string, caseInstructions?: string,
 ): Promise<AskResponse> {
   const role = (roleInstructions || "").trim();
+  const cases = (caseInstructions || "").trim();
   const res = await fetch(`${apiBase()}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, scope, ...(role ? { role_instructions: role } : {}) }),
+    body: JSON.stringify({
+      question, scope,
+      ...(role ? { role_instructions: role } : {}),
+      ...(cases ? { case_instructions: cases } : {}),
+    }),
   });
   if (!res.ok) throw new Error(`ask → ${res.status}`);
   return res.json();

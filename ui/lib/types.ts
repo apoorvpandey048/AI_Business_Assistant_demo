@@ -122,12 +122,51 @@ export interface Trace {
   safety_net?: boolean;
 }
 
+// --- Triage / structured presentation (Features sprint, items 1, 2, 5) ---
+// The Cases prompt sorts an answer's entities into three user-defined colour
+// buckets. Every triage row / timeline event / table is grounded via evidence_ids
+// referencing the same Evidence objects as the answer's citations.
+export type TriageLevel = "red" | "green" | "blue";
+
+export interface TriageItem {
+  label: string;
+  level: TriageLevel;
+  summary: string;
+  evidence_ids: string[];
+  rule?: string | null;
+}
+
+export interface TriagePanel {
+  defined: boolean;
+  legend: Partial<Record<TriageLevel, string>>;
+  items: TriageItem[];
+  note: string;
+}
+
+export interface TimelineEvent {
+  date: string;
+  title: string;
+  detail: string;
+  evidence_ids: string[];
+}
+
+export interface AnswerTable {
+  title: string;
+  columns: string[];
+  rows: string[][];
+  evidence_ids: string[];
+}
+
 export interface AskResponse {
   question: string;
   answer: string;
   insufficient: boolean;
   citations: Evidence[];
   trace: Trace;
+  // All optional / empty by default — absent fields mean the pre-sprint shape.
+  triage?: TriagePanel | null;
+  timeline?: TimelineEvent[];
+  tables?: AnswerTable[];
 }
 
 export interface SourceInfo {
