@@ -11,7 +11,10 @@ from typing import Optional
 
 from app.generation.conflicts import detect_conflicts
 from app.generation.generate import generate_answer
+from app.generation.structured import build_timeline, extract_tables_from_answer
+from app.generation.triage import classify_triage
 from app.generation.verify import verify_citations
+from app.llm.lang import question_language
 from app.models import (AskResponse, Evidence, LLMCall, RouteDecision, StageTiming,
                         Trace)
 from app.pricing import summarize
@@ -37,7 +40,8 @@ class Orchestrator:
     # ----------------------------------------------------------------------
     def ask(self, question: str, allowed_docs: Optional[list[str]] = None,
             allowed_tables: Optional[list[str]] = None,
-            role_instructions: Optional[str] = None) -> AskResponse:
+            role_instructions: Optional[str] = None,
+            case_instructions: Optional[str] = None) -> AskResponse:
         t0 = time.perf_counter()
         trace = Trace(question=question)
         evidence: list[Evidence] = []
@@ -172,6 +176,44 @@ class Orchestrator:
         if not check.verified and evidence:
             trace.notes.append(f"Citation check: {check.note}")
 
+        # 4b) STRUCTURED PRESENTATION (grounded, optional) -------------------
+        # Now that evidence ids are stable and the final answer + cited ids are known,
+        # build the optional triage panel, timeline, and tables. Each is grounded to the
+        # SAME evidence objects; ungrounded rows/events are dropped inside the builders.
+        # target_language mirrors generation's deterministic language contract.
+        target_language = question_language(question)
+        cited_id_list = list(check.cited_ids)
+
+        triage_panel = None
+        triage_call = None
+        if (case_instructions or "").strip():
+            triage_panel, triage_call = classify_triage(
+                question, evidence, case_instructions, target_language,
+                role_instructions=role_instructions,
+            )
+            if triage_call:
+                calls.append(triage_call)
+            if triage_panel and triage_panel.defined:
+                trace.notes.append(
+                    f"Triage (Cases prompt) applied — {len(triage_panel.items)} entity(ies) "
+                    f"classified into the user's red/green/blue buckets"
+                    + (f"; {triage_panel.note}" if triage_panel.note else "") + "."
+                )
+
+        timeline, timeline_call = build_timeline(question, evidence, target_language)
+        if timeline_call:
+            calls.append(timeline_call)
+        if timeline:
+            trace.notes.append(
+                f"Timeline — extracted {len(timeline)} grounded dated event(s) from the evidence."
+            )
+
+        tables = extract_tables_from_answer(answer, cited_id_list)
+        if tables:
+            trace.notes.append(
+                f"Structured output — parsed {len(tables)} table(s) from the answer text."
+            )
+
         # 5) finalize
         trace.llm_calls = calls
         trace.cost = summarize(calls)
@@ -191,6 +233,7 @@ class Orchestrator:
         return AskResponse(
             question=question, answer=answer, insufficient=insufficient,
             citations=citations, trace=trace,
+            triage=triage_panel, timeline=timeline, tables=tables,
         )
 
     def _no_evidence_answer(self, decision: RouteDecision, trace: Trace,

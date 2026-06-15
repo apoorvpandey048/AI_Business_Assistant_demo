@@ -54,6 +54,26 @@ export default function Page() {
     pushToast("Analysis mode cleared — back to General.");
   };
 
+  // User-defined case rules (triage ruleset). Like the role, only the SAVED value is
+  // applied to questions; Settings edits a draft and commits via Save. Persisted here.
+  const [cases, setCases] = React.useState("");
+  React.useEffect(() => {
+    try { setCases(window.localStorage.getItem("aba.cases") || ""); } catch { /* ignore */ }
+  }, []);
+  const saveCases = (c: string) => {
+    const next = c.trim();
+    setCases(next);
+    try { window.localStorage.setItem("aba.cases", next); } catch { /* ignore */ }
+    pushToast(next
+      ? "Case rules saved — triage panels will appear with answers."
+      : "Case rules cleared — no triage panels.");
+  };
+  const clearCases = () => {
+    setCases("");
+    try { window.localStorage.removeItem("aba.cases"); } catch { /* ignore */ }
+    pushToast("Case rules cleared — no triage panels.");
+  };
+
   // Monotonic request token: a response (or retry) from a superseded question can
   // never overwrite the state of a newer one. This was the "evidence panel shows the
   // previous question's evidence" bug — a slow/retried response landing late.
@@ -105,7 +125,7 @@ export default function Page() {
     setResp(null);
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        const r = await ask(query, "workspace", role);
+        const r = await ask(query, "workspace", role, cases);
         if (stale()) return;               // a newer question took over — drop this result
         setResp(r);
         setError(null);
@@ -280,6 +300,7 @@ export default function Page() {
         {tab === "settings" && (
           <Settings
             role={role} onSaveRole={saveRole} onClearRole={clearRole}
+            cases={cases} onSaveCases={saveCases} onClearCases={clearCases}
             config={config} sources={sources}
             onReset={handleReset} resetting={resetting} hasUploads={hasUploads}
             onOpenSources={() => setTab("sources")}

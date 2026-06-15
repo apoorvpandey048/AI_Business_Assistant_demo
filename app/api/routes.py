@@ -115,8 +115,10 @@ def ask(req: AskRequest) -> AskResponse:
     if not question:
         raise HTTPException(400, "Please enter a question.")
     role = (req.role_instructions or "").strip() or None
+    case = (req.case_instructions or "").strip() or None
     try:
-        return get_engine().ask(question, scope=req.scope, role_instructions=role)
+        return get_engine().ask(question, scope=req.scope, role_instructions=role,
+                                case_instructions=case)
     except Exception:  # never leak a stack trace — fail gracefully and honestly
         log.exception("ask() failed for question=%r", question)
         return AskResponse(
