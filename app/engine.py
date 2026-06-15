@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 import time
+import logging
 from functools import lru_cache
 from pathlib import Path
 
@@ -25,6 +26,20 @@ from app.routing.orchestrator import Orchestrator
 from app.sources.crm_source import CrmSource
 from app.sources.document_source import DocumentSource
 from app.sources.structured_source import StructuredSource
+
+logger = logging.getLogger("aba.engine")
+
+# Stable per-row key for entity indexing — prefers a human-meaningful reference column,
+# falls back to the table's surrogate id. Mirrors structured_source._row_key intent.
+_ROW_KEY_COLS = ("invoice_ref", "contract_ref", "project_ref", "sla_ref", "name",
+                 "customer", "title")
+
+
+def _row_key_for(row: dict) -> str:
+    for c in _ROW_KEY_COLS:
+        if row.get(c) is not None:
+            return str(row[c])
+    return str(row.get("id", "?"))
 
 
 class Engine:
@@ -52,6 +67,11 @@ class Engine:
         self._seed_table_names: set[str] = set(schema.table_names())
         self.relational_source = StructuredSource(s.db_path, schema)
 
+        # Cross-source entity graph: feed the DB rows + document-owner links into the
+        # document index so structured (CRM) facts and cross-source identities
+        # participate in entity / graph retrieval (Zero-Loss Phase 3).
+        self._index_relational_into_graph(index, self.relational_source)
+
         # per-source inventory (sample data is pre-loaded)
         self._documents: list[IngestedDocumentInfo] = [
             _doc_info_from_ingested(ingest_pdf(p), origin="sample")
@@ -65,6 +85,42 @@ class Engine:
 
     def _rebuild_orchestrator(self) -> None:
         self.orchestrator = Orchestrator(self.document_source, self.relational_source)
+
+    def _index_relational_into_graph(self, index, relational) -> None:
+        """Feed every row of the relational source into the document index's entity
+        index + knowledge graph, plus a document→owner map from rows that reference a
+        file. This is what brings the SQLite 'CRM' under the same no-loss guarantee:
+        DB-only facts become entities, and an entity present in BOTH a PDF and a row
+        becomes a cross-source bridge. Best-effort and fully offline — any failure
+        leaves document-only retrieval working unchanged."""
+        if not getattr(index.s, "enable_entity_graph", False):
+            return
+        try:
+            import sqlite3
+
+            owner_map: dict[str, str] = {}
+            conn = sqlite3.connect(relational.db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                for table in relational.schema.table_names():
+                    try:
+                        rows = [dict(r) for r in conn.execute(f"SELECT * FROM {table}")]
+                    except Exception:
+                        continue
+                    if not rows:
+                        continue
+                    index.index_rows(table, rows, key_for=_row_key_for)
+                    for r in rows:
+                        doc = r.get("pdf_file") or r.get("doc_file")
+                        owner = r.get("name") or r.get("customer") or r.get("title")
+                        if doc and owner:
+                            owner_map.setdefault(str(doc), str(owner))
+            finally:
+                conn.close()
+            index.set_owner_map(owner_map)
+            index.refresh_graph()
+        except Exception:
+            logger.warning("entity-graph relational indexing skipped", exc_info=True)
 
     # -- runtime ingestion -------------------------------------------------
     def add_pdf(self, filename: str, path: Path) -> IngestedDocumentInfo:
@@ -131,6 +187,9 @@ class Engine:
                     )
                 schema = introspect(self._working_db_path)
                 self.relational_source = StructuredSource(self._working_db_path, schema)
+                # Bring the newly-merged rows under the cross-source entity graph.
+                self._index_relational_into_graph(
+                    self.document_source.index, self.relational_source)
                 self._rebuild_orchestrator()
 
                 cols_by_table = {t.name: [c.name for c in t.columns] for t in schema.tables}

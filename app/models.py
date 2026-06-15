@@ -76,6 +76,9 @@ class DocumentRetrievalTrace(BaseModel):
     search_terms: list[str] = Field(default_factory=list)
     exact_hits: int = 0                       # chunks literally containing a term
     strategy: str = ""                        # plain-English summary for the inspector
+    # coverage-complete retrieval (Zero-Loss sprint, Phase 2)
+    enumeration: bool = False                 # question asked for ALL instances
+    completeness_gaps: list[str] = Field(default_factory=list)  # terms recovered by fill
 
 
 class SqlExecutionTrace(BaseModel):

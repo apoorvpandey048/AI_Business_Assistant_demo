@@ -118,6 +118,29 @@ class Settings(BaseSettings):
     semantic_keep_ratio: float = 0.35
     semantic_min_keep: int = 3
 
+    # --- Coverage-complete retrieval (Zero-Loss sprint, Phase 2) -----------
+    # "No facts missed": an enumeration / multi-fact question must be able to return
+    # ALL relevant passages, not the fixed final_k=7. coverage_max_k is the hard upper
+    # bound that keeps a pathological query from scanning the whole corpus. These only
+    # take effect for questions the detectors flag (enumeration intent, or a
+    # completeness gap) — a plain single-fact question is unchanged, so the precision
+    # batteries (trust/eval) see identical evidence sets.
+    coverage_max_k: int = 40            # ceiling for an enumeration / coverage answer
+    enable_query_expansion: bool = True  # fuse per-aspect / per-entity sub-queries
+    enable_completeness_check: bool = True
+    completeness_max_passes: int = 2     # bounded verify→fill loop (cost guard)
+
+    # --- Entity index + knowledge graph (Zero-Loss sprint, Phase 3) --------
+    # An entity index (entity → chunks + DB rows) and a knowledge graph (co-occurrence,
+    # document ownership, cross-source same-as) let retrieval pull in CONNECTED facts
+    # that share no surface words with the query. Graph expansion contributes a
+    # down-weighted ranking to the fusion (graph_fusion_weight) so it adds recall
+    # without out-voting dense+BM25. Bounded by graph_hops / graph_expand_limit.
+    enable_entity_graph: bool = True
+    graph_hops: int = 2
+    graph_expand_limit: int = 20
+    graph_fusion_weight: float = 0.3     # weight of the graph ranking in weighted RRF
+
     # --- SQL safety --------------------------------------------------------
     sql_row_limit: int = 200
     sql_timeout_seconds: int = 5
