@@ -22,6 +22,13 @@ from typing import Any
 # A run of LETTERS-(optional more letter/number groups) joined by - or _, with at least
 # one digit somewhere, OR a pure alphanumeric code with both letters and digits.
 _IDENTIFIER = re.compile(r"\b[A-Z][A-Z0-9]*(?:[-_/][A-Z0-9]+)+\b")
+# Hebrew / mixed-script structured codes (תיק-4582, סכם-2025, ח-001). A Hebrew-letter
+# run joined by -_/ to further letter/number groups; at least one separator is required
+# so a plain Hebrew word never matches. Custom look-around (not \b) because Python's \b
+# is ASCII-word-boundary unaware of the Hebrew block, which would clip these codes.
+_IDENTIFIER_HE = re.compile(
+    r"(?<![֐-׿\w])[֐-׿0-9]*[֐-׿][֐-׿0-9]*(?:[-_/][֐-׿0-9]+)+(?![֐-׿\w])"
+)
 
 # --- money: $12,000  |  USD 12,000  |  12,000 לחודש (Hebrew "per month") -----------
 _MONEY = re.compile(
@@ -122,7 +129,10 @@ def extract_metadata(text: str) -> dict[str, list[str]]:
     text = " ".join((text or "").split())
     labels = _field_labels(text)
     raw = {
-        "identifiers": _clean(m.group(0) for m in _IDENTIFIER.finditer(text)),
+        "identifiers": _clean(
+            [m.group(0) for m in _IDENTIFIER.finditer(text)]
+            + [m.group(0) for m in _IDENTIFIER_HE.finditer(text)]
+        ),
         "amounts": _clean(m.group(0) for m in _MONEY.finditer(text)),
         "dates": _clean(m.group(0) for m in _DATE.finditer(text)),
         "emails": _clean(m.group(0) for m in _EMAIL.finditer(text)),

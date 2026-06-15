@@ -197,6 +197,11 @@ def _window(text: str, size: int = 700, overlap: int = 120, slack: int = 180) ->
 
 # Boundary markers, best first: record separators, then sentence ends.
 _BREAKS = (" • ", " ● ", " ○ ", "; ", ". ", " – ", ", ")
+# Hebrew sentence/clause ends where RTL reconstruction left no trailing space: the
+# sof-pasuq (׃) or a period/semicolon/comma butting directly against a Hebrew letter.
+# Used only as a fallback when no spaced ASCII marker exists in the window, so a Hebrew
+# run that lacks ". " conventions still breaks on a real boundary rather than mid-fact.
+_BREAKS_HE = re.compile(r"(?:׃|[.;,])(?=[֐-׿])")
 
 
 def _best_break(text: str, start: int, target: int, n: int, slack: int) -> int:
@@ -209,6 +214,12 @@ def _best_break(text: str, start: int, target: int, n: int, slack: int) -> int:
         pos = window.rfind(marker)
         if pos != -1:
             return lo + pos + len(marker)
+    # Fallback: a Hebrew clause/sentence end with no following space.
+    he = None
+    for m in _BREAKS_HE.finditer(window):
+        he = m
+    if he is not None:
+        return lo + he.end()
     return target
 
 
