@@ -1,0 +1,14 @@
+{"id": "he-diagnosis", "lang": "he", "doc": "-_88.pdf", "query": "מה האבחנה של מוחמד בן?", "gold_substr": "דמנציה"}
+{"id": "he-admission-date", "lang": "he", "doc": "-_88.pdf", "query": "מתי מוחמד בן התקבל למוסד?", "gold_substr": "12 בינואר 2026"}
+{"id": "he-surgery-date", "lang": "he", "doc": "-_88.pdf", "query": "באיזה תאריך בוצע הניתוח?", "gold_substr": "16 בפברואר"}
+{"id": "he-hospital", "lang": "he", "doc": "-_88.pdf", "query": "לאיזה בית חולים הועבר המטופל אחרי הנפילה?", "gold_substr": "Northwestern"}
+{"id": "he-medication", "lang": "he", "doc": "-_88.pdf", "query": "אילו תרופות נותנות למטופל לדמנציה?", "gold_substr": "Donepezil"}
+{"id": "he-medicaid", "lang": "he", "doc": "-_88.pdf", "query": "כמה מכסה Medicaid לחודש?", "gold_substr": "12,000"}
+{"id": "he-nurse", "lang": "he", "doc": "-_88.pdf", "query": "מי האחות הראשית בקומה שלוש?", "gold_substr": "אמילי"}
+{"id": "he-covid", "lang": "he", "doc": "-_88.pdf", "query": "מתי המטופל נדבק בקורונה?", "gold_substr": "10 במרץ"}
+{"id": "xl-en-q-he-doc-diagnosis", "lang": "en->he", "doc": "-_88.pdf", "query": "What is Mohammad Ben's diagnosis?", "gold_substr": "דמנציה"}
+{"id": "xl-en-q-he-doc-surgery", "lang": "en->he", "doc": "-_88.pdf", "query": "When was the hip fracture surgery performed?", "gold_substr": "16 בפברואר"}
+{"id": "xl-he-q-en-doc-diagnosis", "lang": "he->en", "doc": "nursing_home_.pdf", "query": "מה האבחנה של מוחמד בן?", "gold_substr": "Dementia"}
+{"id": "xl-he-q-en-doc-medication", "lang": "he->en", "doc": "nursing_home_.pdf", "query": "אילו תרופות נגד דמנציה?", "gold_substr": "Donepezil"}
+{"id": "en-diagnosis", "lang": "en", "doc": "nursing_home_.pdf", "query": "What is the patient's diagnosis?", "gold_substr": "Dementia"}
+{"id": "en-medicaid", "lang": "en", "doc": "nursing_home_.pdf", "query": "How much does Medicaid cover per month?", "gold_substr": "12,000"}

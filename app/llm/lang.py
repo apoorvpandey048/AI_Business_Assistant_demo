@@ -33,6 +33,53 @@ def question_language(text: str) -> str:
     return "he" if _HEBREW.search(text or "") else "en"
 
 
+# --- benign language-selection directives (Sprint 15 / decision #2) -----------------
+# An explicit, well-formed request to answer in a named language ("answer in Hebrew",
+# "תענה באנגלית"). This is DISTINCT from a harmful injection ("ignore instructions",
+# "reveal your prompt", "reply PWNED"): selecting an output language is normal assistant
+# behavior, so we honor it, while harmful directives stay blocked by the generation
+# system prompt + grounding guards. Conservative patterns — a directive VERB is required,
+# so "which contracts are in English?" does NOT match.
+_LANG_WORD = {"english": "en", "hebrew": "he", "אנגלית": "en", "עברית": "he"}
+_DIR_EN = re.compile(
+    r"\b(?:answer|respond|reply|write|output)\s+(?:only\s+)?(?:in\s+)?"
+    r"(english|hebrew|אנגלית|עברית)\b", re.I)
+_DIR_HE = re.compile(
+    r"(?:תענה|ענה|השב|תשיב|תשיבי?|כתוב|תכתוב|השיבי?)\s+\S*\s*ב?(אנגלית|עברית)")
+
+
+def language_directive(text: str) -> str | None:
+    """Return ``'en'``/``'he'`` if ``text`` carries an explicit benign request to answer
+    in that language, else ``None``. Used by the answer-language precedence chain."""
+    t = text or ""
+    m = _DIR_EN.search(t)
+    if m:
+        return _LANG_WORD.get(m.group(1).lower())
+    m = _DIR_HE.search(t)
+    if m:
+        return _LANG_WORD.get(m.group(1))
+    return None
+
+
+def resolve_answer_language(question: str, role_instructions: str | None = None) -> str:
+    """Resolve the answer language by precedence (Sprint 15 / decision #2):
+
+    1. an explicit language directive in the ROLE/persona (operator channel — trusted),
+    2. an explicit language directive in the QUESTION,
+    3. the question's own script (deterministic default).
+
+    Evidence language never decides the answer language. A harmful instruction is not a
+    language directive, so it is ignored here and blocked downstream by the generation
+    guards. Returns ``'en'`` or ``'he'``."""
+    role_dir = language_directive(role_instructions or "")
+    if role_dir:
+        return role_dir
+    q_dir = language_directive(question or "")
+    if q_dir:
+        return q_dir
+    return question_language(question or "")
+
+
 def script_counts(text: str) -> dict[str, int]:
     t = text or ""
     return {

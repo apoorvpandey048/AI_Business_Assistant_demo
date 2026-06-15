@@ -130,6 +130,21 @@ class Settings(BaseSettings):
     enable_completeness_check: bool = True
     completeness_max_passes: int = 2     # bounded verify→fill loop (cost guard)
 
+    # --- Cross-language retrieval (Sprint 15 / Hebrew parity, R1) ----------
+    # When True, document retrieval does NOT hard-filter chunks to the question's
+    # language: a Hebrew question can surface evidence from an English document and
+    # vice-versa. Answer language is still enforced deterministically at generation,
+    # so relaxing the *retrieval* filter never changes the answer's language — it only
+    # widens what evidence is reachable. This closes the structural cross-language
+    # recall gap (a fact in a Hebrew doc was unreachable to an English question).
+    cross_language_retrieval: bool = True
+    # Cross-language safety-net relevance floor: the lexical "shared word" on-topic gate
+    # cannot pass evidence in a DIFFERENT script from the question (a Hebrew query shares
+    # no surface token with English text). When question/evidence scripts differ, gate on
+    # the top dense (semantic) score instead. Measured separation on the real corpus:
+    # relevant cross-language ~0.49–0.55, off-topic ~0.32–0.35 → 0.42 cleanly splits them.
+    cross_language_min_dense: float = 0.42
+
     # --- Entity index + knowledge graph (Zero-Loss sprint, Phase 3) --------
     # An entity index (entity → chunks + DB rows) and a knowledge graph (co-occurrence,
     # document ownership, cross-source same-as) let retrieval pull in CONNECTED facts

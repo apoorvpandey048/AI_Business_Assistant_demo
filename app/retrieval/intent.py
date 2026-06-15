@@ -17,6 +17,12 @@ from dataclasses import dataclass, field
 
 # Identifier-like tokens (codes, latin names) stay ASCII — identifiers are Latin.
 _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_/.]*")
+# Hebrew / mixed-script structured codes (תיק-4582, סכם-2025). A Hebrew-letter run
+# joined by -_/ to further groups; at least one separator required so a plain Hebrew
+# word is never treated as an identifier gate term. Mirrors metadata._IDENTIFIER_HE.
+_WORD_HE = re.compile(
+    r"(?<![֐-׿\w])[֐-׿0-9]*[֐-׿][֐-׿0-9]*(?:[-_/][֐-׿0-9]+)+(?![֐-׿\w])"
+)
 # Content tokens are Unicode-aware so Hebrew (and any other script) words count as
 # real content. Without this, a Hebrew question containing a single Latin token looked
 # "term-dominated" and was wrongly forced into keyword mode (production incident: the
@@ -46,6 +52,13 @@ _TARGET_NOUN = re.compile(
     r"contract|contracts|brief|briefs|report|reports|record|records)\b",
     re.I,
 )
+# Hebrew lookup cues — the same "find the file that mentions X" intent in Hebrew.
+# container: מזכיר/מכיל/מציין (mentions/contains/states); target noun: מסמך/קובץ/חוזה/
+# מסמכים; lookup verb: איזה/אילו/מצא/חפש/הצג (which/find/search/show). Prefix-tolerant
+# via substring search since Hebrew prefixes (ה,ב,ל…) attach to the word.
+_CONTAINER_CUE_HE = re.compile(r"(מזכיר|מכיל|מציין|מתייחס|נמצא|מכילים|מזכירים)")
+_TARGET_NOUN_HE = re.compile(r"(מסמך|מסמכים|קובץ|קבצים|חוזה|חוזים|דוח|דו\"ח|תיק)")
+_LOOKUP_VERB_HE = re.compile(r"(איזה|איזו|אילו|מצא|חפש|הצג|מהו|מהי|אתר)")
 
 # Stop / instruction words that are never useful as search terms.
 _STOP = {
@@ -139,6 +152,14 @@ def _distinctive_terms(query: str) -> list[str]:
         if len(t) > 1 and t.lower() not in _STOP and (has_sep or (has_digit and has_alpha)):
             terms.append(t)
 
+    # 2b) Hebrew / mixed-script identifier codes (תיק-4582) — same anchoring role as the
+    #     ASCII codes above. Without this a Hebrew code never becomes a gate term, so a
+    #     lookup for it falls through to semantic search and can miss the exact chunk.
+    for tok in _WORD_HE.findall(query):
+        t = tok.strip("-_/.'\"")
+        if len(t) > 1 and t not in _STOP_HE:
+            terms.append(t)
+
     # 3) proper nouns: a token whose first letter is uppercase, not a stop/instruction
     #    word (those are already filtered). Instruction verbs ("Find", "Which") are in
     #    _STOP, so a capitalized sentence-initial verb is excluded.
@@ -229,8 +250,11 @@ def detect_intent(query: str) -> QueryIntent:
     gate = _distinctive_terms(q)
     content = _content_tokens(q)
 
-    has_container = bool(_CONTAINER_CUE.search(q))
-    has_lookup = bool(_LOOKUP_VERB.search(q)) and bool(_TARGET_NOUN.search(q))
+    has_container = bool(_CONTAINER_CUE.search(q)) or bool(_CONTAINER_CUE_HE.search(q))
+    has_lookup = (
+        (bool(_LOOKUP_VERB.search(q)) and bool(_TARGET_NOUN.search(q)))
+        or (bool(_LOOKUP_VERB_HE.search(q)) and bool(_TARGET_NOUN_HE.search(q)))
+    )
     has_quote = '"' in q or "'" in q
     # The query is essentially just the term(s) — e.g. a bare "Apoorv" or "SLA-2025".
     term_dominated = bool(gate) and len(content) <= len(gate) + 1
@@ -261,8 +285,11 @@ def is_document_lookup(query: str) -> bool:
     should be answered with the deterministic "the keyword appears in document Z" style;
     the latter wants the fact extracted, even though both retrieve keyword-first."""
     q = query or ""
-    has_container = bool(_CONTAINER_CUE.search(q))
-    has_lookup = bool(_LOOKUP_VERB.search(q)) and bool(_TARGET_NOUN.search(q))
+    has_container = bool(_CONTAINER_CUE.search(q)) or bool(_CONTAINER_CUE_HE.search(q))
+    has_lookup = (
+        (bool(_LOOKUP_VERB.search(q)) and bool(_TARGET_NOUN.search(q)))
+        or (bool(_LOOKUP_VERB_HE.search(q)) and bool(_TARGET_NOUN_HE.search(q)))
+    )
     return has_container or has_lookup
 
 

@@ -9,6 +9,7 @@ import re
 import time
 from typing import Optional
 
+from app.config import get_settings
 from app.generation.conflicts import detect_conflicts
 from app.generation.generate import generate_answer
 from app.generation.verify import verify_citations
@@ -35,6 +36,36 @@ class Orchestrator:
         )
 
     # ----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
+    @staticmethod
+    def _cross_language_enabled() -> bool:
+        return bool(get_settings().cross_language_retrieval)
+
+    def _retrieve_xl(self, query: str, languages: list[str] | None,
+                     allowed_docs: Optional[list[str]],
+                     extra_queries: Optional[list[str]] = None):
+        """Document retrieval with same-language-first, cross-language fallback.
+
+        Searches the question's language first (byte-identical to the legacy filtered
+        behavior). Only if that returns NOTHING and cross-language retrieval is enabled
+        does it widen to all languages — the R1 target case where the fact lives only in
+        the other language. Returns (evidence, dtrace, widened: bool)."""
+        def _run(langs: list[str] | None):
+            filters: dict = {}
+            if langs:
+                filters["languages"] = langs
+            if allowed_docs:
+                filters["documents"] = allowed_docs
+            return self.documents.retrieve(query, filters=filters,
+                                           extra_queries=extra_queries)
+
+        ev, dtrace = _run(languages)
+        if not ev and languages and self._cross_language_enabled():
+            wev, wtrace = _run(None)
+            if wev:
+                return wev, wtrace, True
+        return ev, dtrace, False
+
     def ask(self, question: str, allowed_docs: Optional[list[str]] = None,
             allowed_tables: Optional[list[str]] = None,
             role_instructions: Optional[str] = None) -> AskResponse:
@@ -257,13 +288,10 @@ class Orchestrator:
         """Search the in-scope documents on the ORIGINAL question (never the router's
         possibly-mangled document_subquery) and adopt the result only if it is lexically
         on-topic. Returns adopted evidence (possibly empty)."""
-        filters: dict = {}
-        if decision.languages:
-            filters["languages"] = decision.languages
-        if allowed_docs:
-            filters["documents"] = allowed_docs
-        ev, dtrace = self.documents.retrieve(question, filters=filters)
+        ev, dtrace, widened = self._retrieve_xl(question, decision.languages, allowed_docs)
         trace.document_retrieval = dtrace      # show the recovery attempt in the inspector
+        if widened:
+            trace.notes.append("Safety net widened across languages (R1 fallback).")
         n_docs = len(allowed_docs) if allowed_docs else len(self.documents.documents)
 
         if not ev:
@@ -273,11 +301,25 @@ class Orchestrator:
             )
             return []
         if not _on_topic(question, ev):
-            trace.notes.append(
-                "Safety net — a direct document search returned only off-topic passages "
-                "(no shared keyword with the question); declining to ground an answer."
-            )
-            return []
+            # Lexical gate failed. If the question and the recovered evidence are in
+            # different scripts (cross-language), a shared-word test is structurally
+            # impossible — fall back to a semantic relevance check on the dense score so
+            # a genuine cross-language hit is not discarded (R1 / Hebrew-parity). A truly
+            # off-topic cross-language query still fails the dense floor and is declined.
+            if (self._cross_language_enabled() and _is_cross_script(question, ev)
+                    and _cross_script_relevant(ev, dtrace,
+                                               get_settings().cross_language_min_dense)):
+                trace.notes.append(
+                    "Safety net — cross-language recovery: top passage is in a different "
+                    "script from the question but semantically relevant (dense score above "
+                    "floor); adopting it (answer language enforced at generation)."
+                )
+            else:
+                trace.notes.append(
+                    "Safety net — a direct document search returned only off-topic passages "
+                    "(no shared keyword with the question); declining to ground an answer."
+                )
+                return []
 
         trace.notes.append(
             f"Safety net — router returned no document evidence (route {decision.route}), but "
@@ -298,12 +340,8 @@ class Orchestrator:
         conflict → nothing is adopted → identical behavior to before this check."""
         if allowed_docs is not None and len(allowed_docs) == 0:
             return []
-        filters: dict = {}
-        if decision.languages:
-            filters["languages"] = decision.languages
-        if allowed_docs:
-            filters["documents"] = allowed_docs
-        probe_ev, probe_trace = self.documents.retrieve(question, filters=filters)
+        probe_ev, probe_trace, _ = self._retrieve_xl(question, decision.languages,
+                                                     allowed_docs)
         if not probe_ev:
             return []
         conflicts = detect_conflicts(evidence + probe_ev)
@@ -337,18 +375,18 @@ class Orchestrator:
         if allowed_docs is not None and len(allowed_docs) == 0:
             trace.notes.append("No documents in scope — skipping document retrieval.")
             return []
-        filters: dict = {}
-        if languages:
-            filters["languages"] = languages
-        if allowed_docs:
-            filters["documents"] = allowed_docs
         # The user's question is the PRIMARY search; the router's rewritten sub-query
-        # joins the fusion as an auxiliary phrasing. A rewrite ("look for the recipient
-        # of the proposal in the documents") adds recall but can never out-vote or
-        # crowd out the question itself (question-anchor guarantee in the retriever).
+        # joins the fusion as an auxiliary phrasing. Cross-language retrieval (R1) is
+        # ADDITIVE: same-language first (no same-language regression), widen only if that
+        # finds nothing. See _retrieve_xl.
         extra = [rewrite] if rewrite and rewrite.strip() != query.strip() else None
-        ev, dtrace = self.documents.retrieve(query, filters=filters, extra_queries=extra)
+        ev, dtrace, widened = self._retrieve_xl(query, languages, allowed_docs, extra)
         trace.document_retrieval = dtrace
+        if widened:
+            trace.notes.append(
+                "Cross-language fallback: no same-language passage found; widened "
+                "retrieval to all languages (answer language still enforced)."
+            )
         trace.notes.append(
             f"Document retrieval ({dtrace.embedding_backend} + BM25 → RRF → "
             f"{dtrace.reranker_backend}) selected {len(ev)} passage(s)."
@@ -519,15 +557,24 @@ class Orchestrator:
                 trace.notes.append("Step 3 — linked documents are out of scope; no document evidence.")
                 return evidence
             doc_filter["documents"] = docs_list
-        if decision.languages:
-            doc_filter["languages"] = decision.languages
 
         # primary = the user's question; the router's focused sub-query joins the
         # fusion as an auxiliary phrasing (same rationale as _doc_branch)
         sub = decision.document_subquery
         extra = [sub] if sub and sub.strip() != question.strip() else None
-        doc_ev, dtrace = self.documents.retrieve(question, filters=doc_filter,
+        # Cross-language (R1): same-language first, widen only if empty.
+        langs = decision.languages
+        same_filter = dict(doc_filter)
+        if langs:
+            same_filter["languages"] = langs
+        doc_ev, dtrace = self.documents.retrieve(question, filters=same_filter,
                                                  extra_queries=extra)
+        if not doc_ev and langs and self._cross_language_enabled():
+            wev, wtrace = self.documents.retrieve(question, filters=doc_filter,
+                                                  extra_queries=extra)
+            if wev:
+                doc_ev, dtrace = wev, wtrace
+                trace.notes.append("Step 3 — cross-language fallback widened retrieval.")
         trace.document_retrieval = dtrace
         # Stamp the owning entity onto each passage so the model can't misattribute a
         # generic clause (e.g. "Provider may suspend…") to the wrong customer.
@@ -561,6 +608,40 @@ def _on_topic(question: str, evidence: list[Evidence]) -> bool:
         if any(term_in_text(t, text) for t in terms):
             return True
     return False
+
+
+def _is_cross_script(question: str, evidence: list[Evidence]) -> bool:
+    """True when the question and the top recovered passage are in DIFFERENT scripts
+    (Hebrew vs Latin). In that case the lexical _on_topic gate cannot possibly pass
+    (no shared surface token), so the caller must fall back to a semantic relevance
+    check instead of discarding genuinely-relevant cross-language evidence."""
+    if not evidence:
+        return False
+    q_he = bool(_HEB_CHARS.search(question or ""))
+    top = evidence[0].content or ""
+    ev_he = bool(_HEB_CHARS.search(top))
+    # cross-script when one side is Hebrew and the other has no Hebrew at all
+    return q_he != ev_he
+
+
+def _cross_script_relevant(evidence: list[Evidence], dtrace, floor: float) -> bool:
+    """Semantic relevance gate for cross-language recoveries: the top recovered passage's
+    DENSE (embedding) score must clear ``floor``. RRF/lexical scores are useless here
+    (an off-topic chunk can out-rank by surface frequency), but the dense score cleanly
+    separates a real cross-language hit (~0.5+) from noise (~0.33) — measured on the real
+    corpus. Returns True (trust generation) if no dense score is available."""
+    cands = getattr(dtrace, "candidates", None) or []
+    if not cands:
+        return True
+    ev_ids = {e.chunk_id for e in evidence[:3] if e.chunk_id}
+    scores = [c.dense_score for c in cands
+              if c.chunk_id in ev_ids and c.dense_score is not None]
+    if not scores:
+        # fall back to the global top dense score across candidates
+        scores = [c.dense_score for c in cands if c.dense_score is not None]
+    if not scores:
+        return True
+    return max(scores) >= floor
 
 
 def _documents_from_rows(rows: list[dict]) -> list[str]:

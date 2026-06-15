@@ -23,6 +23,10 @@ from typing import Any, Iterable
 
 _WS = re.compile(r"\s+")
 _HONORIFIC = re.compile(r"^(?:dr|mr|mrs|ms|prof|hon|judge|rev)\.?\s+", re.I)
+# Hebrew honorifics that lead a name (ד"ר סוזן פלדמן → סוזן פלדמן), so a Hebrew person
+# is one entity regardless of whether a given mention carried the title. Mirrors the
+# honorific set in metadata._HEB_NAME.
+_HONORIFIC_HE = re.compile(r'^(?:ד"ר|דר\'?|פרופ\'?|מר|גב\'?|השופט(?:ת)?|עו"ד)\s+')
 # Metadata buckets whose values are entities. (Excludes free-text fields.)
 _ENTITY_FIELDS = ("entities", "identifiers", "emails", "amounts", "dates", "phones")
 
@@ -32,6 +36,7 @@ def normalize_entity(value: str) -> str:
     honorific dropped. ``"Dr.  Richard  Hall"`` and ``"richard hall"`` → same key."""
     v = _WS.sub(" ", (value or "").strip())
     v = _HONORIFIC.sub("", v)
+    v = _HONORIFIC_HE.sub("", v)
     return v.casefold()
 
 
