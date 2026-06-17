@@ -12,6 +12,7 @@ export default function Chat({
   inventory, role, cases, question, setQuestion, onAsk, onClear, resp, loading, error,
   onOpenInspector, onOpenSources,
   onSaveRole, onClearRole, onSaveCases, onClearCases, openPrompt, onOpenPromptHandled, onToast,
+  streamText, streamStage,
 }: {
   inventory: Inventory | null;
   role: string;
@@ -32,6 +33,8 @@ export default function Chat({
   openPrompt?: PromptKind | null;
   onOpenPromptHandled?: () => void;
   onToast?: (msg: string, tone?: ToastItem["tone"]) => void;
+  streamText?: string;
+  streamStage?: string | null;
 }) {
   const uploadedDocs = (inventory?.documents ?? []).filter((d) => d.origin === "uploaded" && d.status === "indexed");
   const uploadedDbs = (inventory?.databases ?? []).filter((d) => d.origin === "uploaded" && d.status === "indexed");
@@ -113,7 +116,25 @@ export default function Chat({
         </Card>
       )}
 
-      {loading && <AnswerSkeleton />}
+      {loading && (streamText ? (
+        <Card className="fade-up p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-text-muted">Answer</span>
+            {streamStage && (
+              <span className="flex items-center gap-2 text-[12px] font-medium text-text-muted">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+                {streamStage}…
+              </span>
+            )}
+          </div>
+          <div dir={isRTL(streamText) ? "rtl" : "ltr"}
+            className="stream-caret whitespace-pre-wrap text-[15px] leading-[1.75] text-text">
+            {streamText}
+          </div>
+        </Card>
+      ) : (
+        <AnswerSkeleton />
+      ))}
 
       {resp && !loading && <AnswerPanel resp={resp} onOpenInspector={onOpenInspector} onToast={onToast} />}
 

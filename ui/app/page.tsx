@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import {
-  ask, fetchConfig, fetchInventory, fetchSources,
+  ask, askStream, fetchConfig, fetchInventory, fetchSources,
   ingestPdf, ingestSqlite, resetWorkspace,
 } from "@/lib/api";
 import type { AppConfig, AskResponse, Inventory, SourceInfo } from "@/lib/types";
@@ -44,6 +44,9 @@ export default function Page() {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [connecting, setConnecting] = React.useState(true);
+  // Streaming state (Phase 7): progressively revealed answer text + current pipeline stage.
+  const [streamText, setStreamText] = React.useState("");
+  const [streamStage, setStreamStage] = React.useState<string | null>(null);
 
   // Visual feedback: every state-changing action raises a toast (no silent changes).
   const [toasts, setToasts] = React.useState<ToastItem[]>([]);
@@ -142,6 +145,31 @@ export default function Page() {
     setLoading(true);
     setError(null);
     setResp(null);
+    setStreamText("");
+    setStreamStage(null);
+
+    // Try the streaming path first for the perceived-speed win. It reveals only the
+    // server-verified answer (citations gate the final payload). Any failure — offline,
+    // no live LLM, network — falls through to the robust non-streaming retry loop below.
+    try {
+      const r = await askStream(query, "workspace", role, cases, {
+        onStage: (s) => { if (!stale()) setStreamStage(s); },
+        onToken: (t) => { if (!stale()) setStreamText((prev) => prev + t); },
+      });
+      if (stale()) return;
+      setResp(r);
+      setError(null);
+      setLoading(false);
+      setStreamText("");
+      setStreamStage(null);
+      return;
+    } catch {
+      if (stale()) return;
+      setStreamText("");
+      setStreamStage(null);
+      // fall through to non-streaming
+    }
+
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
         const r = await ask(query, "workspace", role, cases);
@@ -178,6 +206,8 @@ export default function Page() {
     setResp(null);
     setError(null);
     setLoading(false);
+    setStreamText("");
+    setStreamStage(null);
   };
 
   const handlePdf = async (files: File[]) => {
@@ -335,6 +365,7 @@ export default function Page() {
             onSaveCases={saveCases} onClearCases={clearCases}
             openPrompt={openPrompt} onOpenPromptHandled={() => setOpenPrompt(null)}
             onToast={pushToast}
+            streamText={streamText} streamStage={streamStage}
           />
           </ErrorBoundary>
         )}
