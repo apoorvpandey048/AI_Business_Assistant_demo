@@ -291,6 +291,7 @@ export default function Page() {
             onSaveRole={saveRole} onClearRole={clearRole}
             onSaveCases={saveCases} onClearCases={clearCases}
             openPrompt={openPrompt} onOpenPromptHandled={() => setOpenPrompt(null)}
+            onToast={pushToast}
           />
         )}
         {tab === "sources" && (

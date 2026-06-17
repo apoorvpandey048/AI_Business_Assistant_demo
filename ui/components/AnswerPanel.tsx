@@ -2,14 +2,15 @@
 import React from "react";
 import type { AskResponse, Route } from "@/lib/types";
 import { Button, Card, Icons, Pill, RouteBadge, SectionTitle, Tooltip, cn, isRTL } from "./ui";
-import { CitationChips, EvidenceItem, useCiteHighlight } from "./trace";
+import { CitationChips, EvidenceItem, EvidenceMapContext, buildEvidenceMap, useCiteHighlight } from "./trace";
 import AnswerBody from "./AnswerBody";
+import AnswerActions from "./AnswerActions";
 import TriagePanel from "./TriagePanel";
 import Timeline from "./Timeline";
 
 export default function AnswerPanel({
-  resp, onOpenInspector,
-}: { resp: AskResponse; onOpenInspector?: () => void }) {
+  resp, onOpenInspector, onToast,
+}: { resp: AskResponse; onOpenInspector?: () => void; onToast?: (msg: string, tone?: "success" | "error" | "info") => void }) {
   const t = resp.trace;
   const { highlight, onCite } = useCiteHighlight();
   // Anomaly A fix — the badge must reflect the ANSWER, not the router's pre-retrieval
@@ -40,8 +41,13 @@ export default function AnswerPanel({
   const supportingHint = supporting.length === t.evidence.length
     ? `${supporting.length} item(s)`
     : `${supporting.length} of ${t.evidence.length} retrieved`;
+  // Evidence lookup so [eN] chips can preview the cited passage on hover (Phase 5).
+  const evidenceMap = React.useMemo(
+    () => buildEvidenceMap([...t.evidence, ...resp.citations]), [t.evidence, resp.citations],
+  );
 
   return (
+    <EvidenceMapContext.Provider value={evidenceMap}>
     <div className="fade-up space-y-4">
       {/* routing summary */}
       <Card className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
@@ -82,11 +88,14 @@ export default function AnswerPanel({
       <Card className={cn("p-5", resp.insufficient && "ring-1 ring-amber-200")}>
         <div className="mb-3 flex items-center justify-between">
           <SectionTitle>Answer</SectionTitle>
-          {onOpenInspector && (
-            <Button variant="ghost" size="sm" onClick={onOpenInspector}>
-              <Icons.inspect className="h-3.5 w-3.5" />View retrieval trace
-            </Button>
-          )}
+          <div className="flex items-center gap-1">
+            {!resp.insufficient && onToast && <AnswerActions resp={resp} onToast={onToast} />}
+            {onOpenInspector && (
+              <Button variant="ghost" size="sm" onClick={onOpenInspector}>
+                <Icons.inspect className="h-3.5 w-3.5" />View retrieval trace
+              </Button>
+            )}
+          </div>
         </div>
         {resp.insufficient && (
           <div className="mb-3"><Pill tone="amber"><Icons.alert className="h-3 w-3" />Insufficient evidence — not answered</Pill></div>
@@ -120,5 +129,6 @@ export default function AnswerPanel({
         </Card>
       )}
     </div>
+    </EvidenceMapContext.Provider>
   );
 }

@@ -5,11 +5,13 @@ import { Button, Card, EmptyState, Icons, isRTL } from "./ui";
 import type { PromptKind } from "@/lib/prompt";
 import PromptBar from "./PromptBar";
 import AnswerPanel from "./AnswerPanel";
+import AnswerSkeleton from "./AnswerSkeleton";
+import type { ToastItem } from "./ui";
 
 export default function Chat({
   inventory, role, cases, question, setQuestion, onAsk, onClear, resp, loading, error,
   onOpenInspector, onOpenSources,
-  onSaveRole, onClearRole, onSaveCases, onClearCases, openPrompt, onOpenPromptHandled,
+  onSaveRole, onClearRole, onSaveCases, onClearCases, openPrompt, onOpenPromptHandled, onToast,
 }: {
   inventory: Inventory | null;
   role: string;
@@ -29,6 +31,7 @@ export default function Chat({
   onClearCases: () => void;
   openPrompt?: PromptKind | null;
   onOpenPromptHandled?: () => void;
+  onToast?: (msg: string, tone?: ToastItem["tone"]) => void;
 }) {
   const uploadedDocs = (inventory?.documents ?? []).filter((d) => d.origin === "uploaded" && d.status === "indexed");
   const uploadedDbs = (inventory?.databases ?? []).filter((d) => d.origin === "uploaded" && d.status === "indexed");
@@ -37,6 +40,23 @@ export default function Chat({
     uploadedDocs.length ? `${uploadedDocs.length} document${uploadedDocs.length > 1 ? "s" : ""}` : "",
     uploadedDbs.length ? `${uploadedDbs.length} database${uploadedDbs.length > 1 ? "s" : ""}` : "",
   ].filter(Boolean).join(" · ");
+
+  // Example questions for the first-run empty state — tailored to what's connected,
+  // clickable to prefill the input. Kept generic (the corpus is user-supplied).
+  const exampleQuestions = React.useMemo(() => {
+    const out: string[] = [];
+    if (uploadedDocs.length) {
+      out.push("Summarize the key points across my documents.");
+      out.push("What are the main risks or obligations mentioned?");
+    }
+    if (uploadedDbs.length) {
+      out.push("What are the totals in my database?");
+    }
+    if (uploadedDocs.length && uploadedDbs.length) {
+      out.push("Cross-reference the documents with the database records.");
+    }
+    return out.slice(0, 4);
+  }, [uploadedDocs.length, uploadedDbs.length]);
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
@@ -93,21 +113,28 @@ export default function Chat({
         </Card>
       )}
 
-      {loading && (
-        <Card className="p-10 text-center">
-          <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-indigo-500" />
-          <span className="text-[13px] text-slate-500">Routing → retrieving → grounding…</span>
-        </Card>
-      )}
+      {loading && <AnswerSkeleton />}
 
-      {resp && !loading && <AnswerPanel resp={resp} onOpenInspector={onOpenInspector} />}
+      {resp && !loading && <AnswerPanel resp={resp} onOpenInspector={onOpenInspector} onToast={onToast} />}
 
       {!resp && !loading && !error && (
         <Card>
           {hasSources ? (
             <EmptyState icon={<Icons.spark className="h-6 w-6" />} title="Ask anything about your sources">
-              Answers are grounded in your knowledge base with verifiable citations — open the
-              Inspector at any time to see exactly how each answer was produced.
+              <span className="block">
+                Answers are grounded in your knowledge base with verifiable citations — open the
+                Inspector at any time to see exactly how each answer was produced.
+              </span>
+              {exampleQuestions.length > 0 && (
+                <span className="mt-4 flex flex-wrap justify-center gap-2">
+                  {exampleQuestions.map((q) => (
+                    <button key={q} onClick={() => setQuestion(q)}
+                      className="focus-ring rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[12px] text-text-muted transition hover:border-accent/40 hover:bg-accent-soft hover:text-accent">
+                      {q}
+                    </button>
+                  ))}
+                </span>
+              )}
             </EmptyState>
           ) : (
             <EmptyState icon={<Icons.upload className="h-6 w-6" />} title="Start by adding sources">
