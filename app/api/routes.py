@@ -136,6 +136,68 @@ def ask(req: AskRequest) -> AskResponse:
         )
 
 
+@router.post("/ask/stream")
+def ask_stream(req: AskRequest):
+    """Streaming variant of /ask (Server-Sent Events).
+
+    Emits, in order:
+      - `stage`  events as the pipeline advances (routing → retrieving → grounding)
+      - `token`  events that progressively reveal the answer text
+      - `final`  one event carrying the COMPLETE AskResponse JSON (citations, triage,
+                 timeline, tables)
+      - `error`  on failure
+
+    IMPORTANT — trust invariant: we do NOT stream model tokens as they are produced by
+    the LLM. The engine's ask() runs fully first (retrieval + grounded generation +
+    server-side citation verification), and only the already-verified answer is then
+    revealed progressively. We never stream an unverifiable citation as final. The
+    non-streaming /ask is preserved unchanged for the eval harness and offline mode.
+    """
+    import json
+    from fastapi.responses import StreamingResponse
+
+    question = (req.question or "").strip()
+    role = (req.role_instructions or "").strip() or None
+    case = (req.case_instructions or "").strip() or None
+
+    def sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    def gen():
+        if not question:
+            yield sse("error", {"detail": "Please enter a question."})
+            return
+        try:
+            yield sse("stage", {"stage": "routing"})
+            yield sse("stage", {"stage": "retrieving"})
+            # The heavy lifting — retrieval, grounded generation, citation verification —
+            # all happens here and returns a fully-verified response.
+            resp = get_engine().ask(question, scope=req.scope, role_instructions=role,
+                                    case_instructions=case)
+            yield sse("stage", {"stage": "grounding"})
+
+            # Reveal the verified answer progressively, by word, so the client renders a
+            # natural "typing" effect without us ever emitting unverified text.
+            answer = resp.answer or ""
+            buf = []
+            for i, tok in enumerate(answer.split(" ")):
+                buf.append(tok)
+                # flush in small chunks to keep the event count reasonable
+                if len(buf) >= 4 or i == 0:
+                    yield sse("token", {"text": " ".join(buf) + " "})
+                    buf = []
+            if buf:
+                yield sse("token", {"text": " ".join(buf)})
+
+            yield sse("final", json.loads(resp.model_dump_json()))
+        except Exception:
+            log.exception("ask_stream() failed for question=%r", question)
+            yield sse("error", {"detail": "We hit an unexpected error while processing this question."})
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 # -- ingestion ---------------------------------------------------------------
 
 @router.post("/ingest/pdf", response_model=IngestResult)

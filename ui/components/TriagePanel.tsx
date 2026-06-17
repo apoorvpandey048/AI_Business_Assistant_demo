@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
 import type { TriageLevel, TriagePanel as TriagePanelData } from "@/lib/types";
-import { Icons, bidiPlaintext, cn, isRTL } from "./ui";
+import { Icons, Tooltip, bidiPlaintext, cn, isRTL } from "./ui";
 
 /* ------------------------------------------------------------------ *
  * TriagePanel — the user-defined red / green / blue buckets.
@@ -54,15 +54,23 @@ const COLUMN: Record<TriageLevel, {
 
 function CiteChip({ id, onCite }: { id: string; onCite: Cite }) {
   return (
-    <button onClick={() => onCite(id)}
-      className="inline-flex items-center rounded-md bg-indigo-50 px-1.5 text-[10px] font-bold text-indigo-600 ring-1 ring-indigo-200 transition hover:bg-indigo-100">
+    <button onClick={() => onCite(id)} aria-label={`Citation ${id} — jump to source`}
+      className="focus-ring inline-flex items-center rounded-md bg-indigo-50 px-1.5 text-[10px] font-bold text-indigo-600 ring-1 ring-indigo-200 transition hover:bg-indigo-100">
       {id}
     </button>
   );
 }
 
-function ItemCard({ item, onCite }: { item: TriagePanelData["items"][number]; onCite: Cite }) {
+function ItemCard({ item, onCite, legendText }: {
+  item: TriagePanelData["items"][number]; onCite: Cite; legendText: string;
+}) {
   const rtl = isRTL(`${item.label} ${item.summary}`);
+  // Anomaly C fix — with a monolithic Cases prompt the model often echoes the whole
+  // ruleset sentence as every item's `rule`, repeating identical boilerplate on each card.
+  // Show the per-item rule ONLY when it adds signal: it differs from the column's legend
+  // and is short enough to be a genuine per-item note (as in the good multi-rule cases).
+  const rule = (item.rule || "").trim();
+  const showRule = !!rule && rule !== legendText.trim() && rule.length <= 64;
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-2.5 shadow-sm">
       <div dir={rtl ? "rtl" : "ltr"} style={bidiPlaintext}
@@ -75,9 +83,9 @@ function ItemCard({ item, onCite }: { item: TriagePanelData["items"][number]; on
           {item.summary}
         </p>
       )}
-      {item.rule && (
+      {showRule && (
         <p className="mt-1 text-[10.5px] italic text-slate-400">
-          rule: {item.rule}
+          rule: {rule}
         </p>
       )}
       {item.evidence_ids.length > 0 && (
@@ -90,24 +98,30 @@ function ItemCard({ item, onCite }: { item: TriagePanelData["items"][number]; on
 }
 
 export default function TriagePanel({
-  triage, onCite,
+  triage, onCite, hidden,
 }: {
   triage?: TriagePanelData | null;
   onCite: Cite;
+  hidden?: boolean;
 }) {
-  // Nothing to show unless triage is explicitly defined.
-  if (!triage || !triage.defined) return null;
+  // Nothing to show unless triage is explicitly defined. Also hidden on declines —
+  // empty red/green/blue columns under an "insufficient evidence" answer is noise.
+  if (hidden || !triage || !triage.defined) return null;
 
   const byLevel: Record<TriageLevel, TriagePanelData["items"]> = { red: [], green: [], blue: [] };
   for (const it of triage.items) {
     if (byLevel[it.level]) byLevel[it.level].push(it);
   }
+  const total = triage.items.length;
 
   return (
     <section className="surface p-4" aria-label="Triage">
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <Icons.grid className="h-4 w-4 text-indigo-500" />
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Triage</h3>
+        <span className="text-[11px] text-slate-400">
+          · {total} item{total === 1 ? "" : "s"} sorted by your case rules
+        </span>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -121,13 +135,17 @@ export default function TriagePanel({
               <div className={cn("flex items-center gap-2 rounded-t-xl px-3 py-2", col.head)}>
                 <span className={cn("h-2 w-2 shrink-0 rounded-full", col.dot)} aria-hidden />
                 <Icon className="h-3.5 w-3.5 shrink-0" />
-                <span className="min-w-0 flex-1 truncate text-[12px] font-semibold" title={label}>{label}</span>
+                <Tooltip label={label} className="min-w-0 flex-1">
+                  <span className="block min-w-0 truncate text-left text-[12px] font-semibold">{label}</span>
+                </Tooltip>
                 <span className={cn("rounded px-1.5 text-[10px] font-bold", col.chipText)}>{items.length}</span>
               </div>
               <div className="flex flex-col gap-2 p-2.5">
                 {items.length === 0
-                  ? <p className="px-1 py-2 text-[11.5px] text-slate-400">No items</p>
-                  : items.map((it, i) => <ItemCard key={`${it.label}-${i}`} item={it} onCite={onCite} />)}
+                  ? <p className="px-1 py-3 text-center text-[11.5px] text-slate-300">Nothing in this bucket</p>
+                  : items.map((it, i) => (
+                      <ItemCard key={`${it.label}-${i}`} item={it} onCite={onCite} legendText={label} />
+                    ))}
               </div>
             </div>
           );

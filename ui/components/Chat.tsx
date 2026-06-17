@@ -1,16 +1,22 @@
 "use client";
 import React from "react";
 import type { AskResponse, Inventory } from "@/lib/types";
-import { Button, Card, EmptyState, Icons, Pill, isRTL } from "./ui";
-import { roleLabel } from "@/lib/role";
+import { Button, Card, EmptyState, Icons, isRTL } from "./ui";
+import type { PromptKind } from "@/lib/prompt";
+import PromptBar from "./PromptBar";
 import AnswerPanel from "./AnswerPanel";
+import AnswerSkeleton from "./AnswerSkeleton";
+import type { ToastItem } from "./ui";
 
 export default function Chat({
-  inventory, role, question, setQuestion, onAsk, onClear, resp, loading, error,
-  onOpenInspector, onOpenSources, onOpenSettings,
+  inventory, role, cases, question, setQuestion, onAsk, onClear, resp, loading, error,
+  onOpenInspector, onOpenSources,
+  onSaveRole, onClearRole, onSaveCases, onClearCases, openPrompt, onOpenPromptHandled, onToast,
+  streamText, streamStage,
 }: {
   inventory: Inventory | null;
   role: string;
+  cases: string;
   question: string;
   setQuestion: (q: string) => void;
   onAsk: (q: string) => void;
@@ -20,7 +26,15 @@ export default function Chat({
   error: string | null;
   onOpenInspector: () => void;
   onOpenSources: () => void;
-  onOpenSettings: () => void;
+  onSaveRole: (v: string) => void;
+  onClearRole: () => void;
+  onSaveCases: (v: string) => void;
+  onClearCases: () => void;
+  openPrompt?: PromptKind | null;
+  onOpenPromptHandled?: () => void;
+  onToast?: (msg: string, tone?: ToastItem["tone"]) => void;
+  streamText?: string;
+  streamStage?: string | null;
 }) {
   const uploadedDocs = (inventory?.documents ?? []).filter((d) => d.origin === "uploaded" && d.status === "indexed");
   const uploadedDbs = (inventory?.databases ?? []).filter((d) => d.origin === "uploaded" && d.status === "indexed");
@@ -30,29 +44,46 @@ export default function Chat({
     uploadedDbs.length ? `${uploadedDbs.length} database${uploadedDbs.length > 1 ? "s" : ""}` : "",
   ].filter(Boolean).join(" · ");
 
+  // Example questions for the first-run empty state — tailored to what's connected,
+  // clickable to prefill the input. Kept generic (the corpus is user-supplied).
+  const exampleQuestions = React.useMemo(() => {
+    const out: string[] = [];
+    if (uploadedDocs.length) {
+      out.push("Summarize the key points across my documents.");
+      out.push("What are the main risks or obligations mentioned?");
+    }
+    if (uploadedDbs.length) {
+      out.push("What are the totals in my database?");
+    }
+    if (uploadedDocs.length && uploadedDbs.length) {
+      out.push("Cross-reference the documents with the database records.");
+    }
+    return out.slice(0, 4);
+  }, [uploadedDocs.length, uploadedDbs.length]);
+
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       {/* knowledge-base status strip */}
-      <div className="flex flex-wrap items-center gap-2 px-1 text-[12px] text-slate-500">
-        <Icons.layers className="h-3.5 w-3.5 text-indigo-400" />
+      <div className="flex flex-wrap items-center gap-2 px-1 text-[12px] text-text-muted">
+        <Icons.layers className="h-3.5 w-3.5 text-accent" />
         {hasSources ? (
-          <span>Answering from <span className="font-medium text-slate-700">{sourceSummary}</span> in your knowledge base.</span>
+          <span>Answering from <span className="font-medium text-text-strong">{sourceSummary}</span> in your knowledge base.</span>
         ) : (
           <span>Your knowledge base is empty.</span>
         )}
-        <button onClick={onOpenSources} className="font-medium text-indigo-600 hover:text-indigo-700">
+        <button onClick={onOpenSources} className="font-medium text-accent hover:text-accent-hover">
           Manage sources
         </button>
-        {/* The active analysis mode is always visible — "General" when none is set —
-            so the user never has to open Settings to know what is shaping answers. */}
-        <button onClick={onOpenSettings} className="ml-auto" title="Change in Settings">
-          {role.trim() ? (
-            <Pill tone="indigo"><Icons.spark className="h-3 w-3" />Analysis mode: {roleLabel(role)}</Pill>
-          ) : (
-            <Pill tone="slate">Analysis mode: General</Pill>
-          )}
-        </button>
       </div>
+
+      {/* Prompt bar — both prompts live here, above the input, as the single source
+          of truth (moved out of Settings). */}
+      <PromptBar
+        role={role} cases={cases}
+        onSaveRole={onSaveRole} onClearRole={onClearRole}
+        onSaveCases={onSaveCases} onClearCases={onClearCases}
+        openKind={openPrompt} onOpenHandled={onOpenPromptHandled}
+      />
 
       <Card className="p-3">
         <textarea
@@ -85,21 +116,46 @@ export default function Chat({
         </Card>
       )}
 
-      {loading && (
-        <Card className="p-10 text-center">
-          <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-slate-200 border-t-indigo-500" />
-          <span className="text-[13px] text-slate-500">Routing → retrieving → grounding…</span>
+      {loading && (streamText ? (
+        <Card className="fade-up p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-text-muted">Answer</span>
+            {streamStage && (
+              <span className="flex items-center gap-2 text-[12px] font-medium text-text-muted">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+                {streamStage}…
+              </span>
+            )}
+          </div>
+          <div dir={isRTL(streamText) ? "rtl" : "ltr"}
+            className="stream-caret whitespace-pre-wrap text-[15px] leading-[1.75] text-text">
+            {streamText}
+          </div>
         </Card>
-      )}
+      ) : (
+        <AnswerSkeleton />
+      ))}
 
-      {resp && !loading && <AnswerPanel resp={resp} onOpenInspector={onOpenInspector} />}
+      {resp && !loading && <AnswerPanel resp={resp} onOpenInspector={onOpenInspector} onToast={onToast} />}
 
       {!resp && !loading && !error && (
         <Card>
           {hasSources ? (
             <EmptyState icon={<Icons.spark className="h-6 w-6" />} title="Ask anything about your sources">
-              Answers are grounded in your knowledge base with verifiable citations — open the
-              Inspector at any time to see exactly how each answer was produced.
+              <span className="block">
+                Answers are grounded in your knowledge base with verifiable citations — open the
+                Inspector at any time to see exactly how each answer was produced.
+              </span>
+              {exampleQuestions.length > 0 && (
+                <span className="mt-4 flex flex-wrap justify-center gap-2">
+                  {exampleQuestions.map((q) => (
+                    <button key={q} onClick={() => setQuestion(q)}
+                      className="focus-ring rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[12px] text-text-muted transition hover:border-accent/40 hover:bg-accent-soft hover:text-accent">
+                      {q}
+                    </button>
+                  ))}
+                </span>
+              )}
             </EmptyState>
           ) : (
             <EmptyState icon={<Icons.upload className="h-6 w-6" />} title="Start by adding sources">

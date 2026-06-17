@@ -3,7 +3,39 @@ import React from "react";
 import type {
   AskResponse, Evidence, RetrievalCandidate, SqlExecutionTrace,
 } from "@/lib/types";
-import { Icons, OriginTag, Pill, RouteBadge, ScoreBar, bidiPlaintext, cn, isRTL } from "./ui";
+import { Icons, OriginTag, Pill, RouteBadge, ScoreBar, Tooltip, bidiPlaintext, cn, isRTL } from "./ui";
+
+/* ---------- evidence lookup for citation hover previews ---------- *
+ * A React context carrying an id → Evidence map so any [eN] chip can show a
+ * preview of the cited passage on hover/focus without prop-drilling through the
+ * markdown renderer. Optional: when absent (e.g. Inspector), chips render plain. */
+export const EvidenceMapContext = React.createContext<Record<string, Evidence> | null>(null);
+
+export function buildEvidenceMap(evidence: Evidence[]): Record<string, Evidence> {
+  const m: Record<string, Evidence> = {};
+  for (const e of evidence) m[e.id] = e;
+  return m;
+}
+
+// Wraps a citation chip with a hover/focus preview of the cited passage.
+export function CitePreview({ id, children }: { id: string; children: React.ReactNode }) {
+  const map = React.useContext(EvidenceMapContext);
+  const e = map?.[id];
+  if (!e) return <>{children}</>;
+  const rtl = isRTL(e.content);
+  const snippet = e.content.length > 200 ? e.content.slice(0, 200) + "…" : e.content;
+  return (
+    <Tooltip
+      label={
+        <span className="block max-w-[18rem] text-left">
+          <span className="mb-1 block font-semibold text-white/90">{e.citation_label}{e.source_name ? ` · ${e.source_name}` : ""}</span>
+          <span dir={rtl ? "rtl" : "ltr"} className="block font-normal leading-snug text-white/80">{snippet}</span>
+        </span>
+      }>
+      {children}
+    </Tooltip>
+  );
+}
 
 /* ---------- cite → scroll/highlight ---------- */
 export function useCiteHighlight() {
@@ -72,14 +104,15 @@ export function CitationChips({ citations, onCite }: { citations: Evidence[]; on
   return (
     <div className="flex flex-wrap gap-2">
       {citations.map((c) => (
-        <button key={c.id} onClick={() => onCite(c.id)}
-          title={c.origin === "uploaded" ? "From your upload" : c.origin === "sample" ? "From sample data" : undefined}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] transition hover:border-indigo-300 hover:bg-indigo-50">
-          <span className="font-mono font-bold text-indigo-600">{c.id}</span>
-          {c.source_kind === "relational" ? <Icons.db className="h-3 w-3 text-sky-500" /> : <Icons.doc className="h-3 w-3 text-emerald-500" />}
-          <span className="text-slate-500">{c.citation_label}</span>
-          {c.origin === "uploaded" && <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />}
-        </button>
+        <CitePreview key={c.id} id={c.id}>
+          <button onClick={() => onCite(c.id)} aria-label={`Citation ${c.id} — ${c.citation_label}`}
+            className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] transition hover:border-indigo-300 hover:bg-indigo-50">
+            <span className="font-mono font-bold text-indigo-600">{c.id}</span>
+            {c.source_kind === "relational" ? <Icons.db className="h-3 w-3 text-sky-500" /> : <Icons.doc className="h-3 w-3 text-emerald-500" />}
+            <span className="text-slate-500">{c.citation_label}</span>
+            {c.origin === "uploaded" && <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />}
+          </button>
+        </CitePreview>
       ))}
     </div>
   );
