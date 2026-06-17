@@ -1,16 +1,19 @@
 "use client";
 import React from "react";
 import type { AskResponse, Inventory } from "@/lib/types";
-import { Button, Card, EmptyState, Icons, Pill, isRTL } from "./ui";
-import { roleLabel } from "@/lib/role";
+import { Button, Card, EmptyState, Icons, isRTL } from "./ui";
+import type { PromptKind } from "@/lib/prompt";
+import PromptBar from "./PromptBar";
 import AnswerPanel from "./AnswerPanel";
 
 export default function Chat({
-  inventory, role, question, setQuestion, onAsk, onClear, resp, loading, error,
-  onOpenInspector, onOpenSources, onOpenSettings,
+  inventory, role, cases, question, setQuestion, onAsk, onClear, resp, loading, error,
+  onOpenInspector, onOpenSources,
+  onSaveRole, onClearRole, onSaveCases, onClearCases, openPrompt, onOpenPromptHandled,
 }: {
   inventory: Inventory | null;
   role: string;
+  cases: string;
   question: string;
   setQuestion: (q: string) => void;
   onAsk: (q: string) => void;
@@ -20,7 +23,12 @@ export default function Chat({
   error: string | null;
   onOpenInspector: () => void;
   onOpenSources: () => void;
-  onOpenSettings: () => void;
+  onSaveRole: (v: string) => void;
+  onClearRole: () => void;
+  onSaveCases: (v: string) => void;
+  onClearCases: () => void;
+  openPrompt?: PromptKind | null;
+  onOpenPromptHandled?: () => void;
 }) {
   const uploadedDocs = (inventory?.documents ?? []).filter((d) => d.origin === "uploaded" && d.status === "indexed");
   const uploadedDbs = (inventory?.databases ?? []).filter((d) => d.origin === "uploaded" && d.status === "indexed");
@@ -33,26 +41,26 @@ export default function Chat({
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       {/* knowledge-base status strip */}
-      <div className="flex flex-wrap items-center gap-2 px-1 text-[12px] text-slate-500">
-        <Icons.layers className="h-3.5 w-3.5 text-indigo-400" />
+      <div className="flex flex-wrap items-center gap-2 px-1 text-[12px] text-text-muted">
+        <Icons.layers className="h-3.5 w-3.5 text-accent" />
         {hasSources ? (
-          <span>Answering from <span className="font-medium text-slate-700">{sourceSummary}</span> in your knowledge base.</span>
+          <span>Answering from <span className="font-medium text-text-strong">{sourceSummary}</span> in your knowledge base.</span>
         ) : (
           <span>Your knowledge base is empty.</span>
         )}
-        <button onClick={onOpenSources} className="font-medium text-indigo-600 hover:text-indigo-700">
+        <button onClick={onOpenSources} className="font-medium text-accent hover:text-accent-hover">
           Manage sources
         </button>
-        {/* The active analysis mode is always visible — "General" when none is set —
-            so the user never has to open Settings to know what is shaping answers. */}
-        <button onClick={onOpenSettings} className="ml-auto" title="Change in Settings">
-          {role.trim() ? (
-            <Pill tone="indigo"><Icons.spark className="h-3 w-3" />Analysis mode: {roleLabel(role)}</Pill>
-          ) : (
-            <Pill tone="slate">Analysis mode: General</Pill>
-          )}
-        </button>
       </div>
+
+      {/* Prompt bar — both prompts live here, above the input, as the single source
+          of truth (moved out of Settings). */}
+      <PromptBar
+        role={role} cases={cases}
+        onSaveRole={onSaveRole} onClearRole={onClearRole}
+        onSaveCases={onSaveCases} onClearCases={onClearCases}
+        openKind={openPrompt} onOpenHandled={onOpenPromptHandled}
+      />
 
       <Card className="p-3">
         <textarea

@@ -2,67 +2,39 @@
 import React from "react";
 import type { AppConfig, SourceInfo } from "@/lib/types";
 import { roleLabel } from "@/lib/role";
-import { Button, Card, Icons, Pill, SectionTitle, cn, isRTL } from "./ui";
+import type { PromptKind } from "@/lib/prompt";
+import { Button, Card, Icons, Pill, SectionTitle, cn } from "./ui";
 import ProviderSettings from "./ProviderSettings";
 import type { ToastItem } from "./ui";
-
-/* Both prompt editors (Analysis mode and Case rules) are draft-based: nothing is
-   applied until Save. Each card always shows exactly one of three states so the user
-   never has to guess:
-   - "Active"           saved, non-empty, draft matches what is applied
-   - "Inactive"         nothing saved, nothing typed
-   - "Unsaved changes"  the draft differs from what is currently applied        */
-type PromptState = "active" | "inactive" | "unsaved";
-
-function promptState(saved: string, draft: string): PromptState {
-  if (draft.trim() !== saved.trim()) return "unsaved";
-  return saved.trim() ? "active" : "inactive";
-}
 
 /* A light, plain-language heading that groups several cards together (item 5:
    "settings should be extremely simple and understandable"). */
 function GroupHeader({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
     <div className="lg:col-span-2 -mb-1 mt-1 first:mt-0">
-      <h2 className="text-[13px] font-semibold text-slate-800">{children}</h2>
-      {hint && <p className="mt-0.5 text-[12px] leading-relaxed text-slate-500">{hint}</p>}
+      <h2 className="text-[13px] font-semibold text-text-strong">{children}</h2>
+      {hint && <p className="mt-0.5 text-[12px] leading-relaxed text-text-muted">{hint}</p>}
     </div>
   );
 }
 
 export default function Settings({
-  role, onSaveRole, onClearRole,
-  cases, onSaveCases, onClearCases,
+  role, cases,
   config, sources, onReset, resetting, hasUploads,
-  onOpenSources, pushToast, onRefreshConfig,
+  onOpenSources, onEditPrompt, pushToast, onRefreshConfig,
 }: {
   role: string;                       // the SAVED role — the one applied to questions
-  onSaveRole: (r: string) => void;
-  onClearRole: () => void;
   cases: string;                      // the SAVED case rules — applied to questions
-  onSaveCases: (c: string) => void;
-  onClearCases: () => void;
   config: AppConfig | null;
   sources: SourceInfo[];
   onReset: () => void;
   resetting: boolean;
   hasUploads: boolean;
   onOpenSources: () => void;
+  onEditPrompt: (kind: PromptKind) => void;   // jump to the prompt bar (Chat tab)
   pushToast: (message: string, tone?: ToastItem["tone"]) => void;
   onRefreshConfig: () => void;        // refresh /config after a provider switch (top-bar)
 }) {
-  // ---- analysis mode (role) draft ----
-  const [roleDraft, setRoleDraft] = React.useState(role);
-  React.useEffect(() => { setRoleDraft(role); }, [role]);
-  const roleDirty = roleDraft.trim() !== role.trim();
-  const rState = promptState(role, roleDraft);
-
-  // ---- case rules draft ----
-  const [casesDraft, setCasesDraft] = React.useState(cases);
-  React.useEffect(() => { setCasesDraft(cases); }, [cases]);
-  const casesDirty = casesDraft.trim() !== cases.trim();
-  const cState = promptState(cases, casesDraft);
-
   const confirmReset = () => {
     if (window.confirm(
       "Remove all uploaded sources and clear the current conversation?\n\n" +
@@ -83,82 +55,37 @@ export default function Settings({
         How it answers
       </GroupHeader>
 
-      {/* ---- analysis mode (persona) ---- */}
+      {/* Prompts now live in the bar above the question (single source of truth).
+          Settings shows a read-only summary + a deep link to edit them there. */}
       <Card className="p-4 lg:col-span-2">
-        <SectionTitle>Analysis mode</SectionTitle>
-        <p className="mb-2 text-[12px] leading-relaxed text-slate-500">
-          Give the assistant a professional perspective — it shapes tone and emphasis only.
-          Insufficient evidence is still declared.
-        </p>
-        <textarea
-          value={roleDraft} onChange={(e) => setRoleDraft(e.target.value)}
-          rows={2} maxLength={1500} dir={isRTL(roleDraft) ? "rtl" : "ltr"}
-          placeholder='e.g. "Act as a lawyer reviewing these contracts" or "Analyze as a compliance officer"'
-          className="focus-ring w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-700 placeholder:text-slate-400" />
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {rState === "active" && (
-            <Pill tone="emerald"><Icons.check className="h-3 w-3" />Active — “{roleLabel(role)}” is applied to every question</Pill>
-          )}
-          {rState === "inactive" && (
-            <Pill tone="slate">Inactive — answering in General mode</Pill>
-          )}
-          {rState === "unsaved" && (
-            <Pill tone="amber"><Icons.alert className="h-3 w-3" />Unsaved changes — not applied until you save</Pill>
-          )}
-          <span className="ml-auto flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => { setRoleDraft(""); onClearRole(); }}
-              disabled={!role.trim() && !roleDraft.trim()}
-              title="Remove the analysis mode and return to General">
-              <Icons.x className="h-3.5 w-3.5" />Clear
+        <SectionTitle hint="edited above the question">Your prompts</SectionTitle>
+        <div className="space-y-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-1.5 text-[12.5px] text-text-muted">
+              <Icons.spark className="h-3.5 w-3.5 text-accent" />Analysis mode
+            </span>
+            {role.trim()
+              ? <Pill tone="emerald"><Icons.check className="h-3 w-3" />{roleLabel(role)}</Pill>
+              : <Pill tone="slate">General</Pill>}
+            <Button variant="ghost" size="sm" className="ml-auto" onClick={() => onEditPrompt("role")}>
+              <Icons.chevron className="h-3.5 w-3.5" />Edit above the question
             </Button>
-            <Button size="sm" onClick={() => onSaveRole(roleDraft)} disabled={!roleDirty}
-              title={roleDirty ? "Save and apply this analysis mode" : "No changes to save"}>
-              <Icons.check className="h-3.5 w-3.5" />Save
+          </div>
+          <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2.5">
+            <span className="flex items-center gap-1.5 text-[12.5px] text-text-muted">
+              <Icons.grid className="h-3.5 w-3.5 text-accent" />Triage rules
+            </span>
+            {cases.trim()
+              ? <Pill tone="emerald"><Icons.check className="h-3 w-3" />On</Pill>
+              : <Pill tone="slate">Off</Pill>}
+            <Button variant="ghost" size="sm" className="ml-auto" onClick={() => onEditPrompt("cases")}>
+              <Icons.chevron className="h-3.5 w-3.5" />Edit above the question
             </Button>
-          </span>
+          </div>
         </div>
-        <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
-          Saved in this browser and applied to every question until you clear it.
-          The current mode is always shown next to the chat input.
-        </p>
-      </Card>
-
-      {/* ---- case rules (triage) ---- */}
-      <Card className="p-4 lg:col-span-2">
-        <SectionTitle>Case rules</SectionTitle>
-        <p className="mb-2 text-[12px] leading-relaxed text-slate-500">
-          Define how results are sorted into the three colour panels (red / green / blue)
-          shown with each answer. The meaning of each colour is whatever you write here.
-        </p>
-        <textarea
-          value={casesDraft} onChange={(e) => setCasesDraft(e.target.value)}
-          rows={3} maxLength={1500} dir={isRTL(casesDraft) ? "rtl" : "ltr"}
-          placeholder='e.g. "Patients on life support → red; with fever or unstable vitals → green; stable → blue"'
-          className="focus-ring w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-700 placeholder:text-slate-400" />
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {cState === "active" && (
-            <Pill tone="emerald"><Icons.check className="h-3 w-3" />Active — triage panels appear with every answer</Pill>
-          )}
-          {cState === "inactive" && (
-            <Pill tone="slate">Inactive — no triage panels shown</Pill>
-          )}
-          {cState === "unsaved" && (
-            <Pill tone="amber"><Icons.alert className="h-3 w-3" />Unsaved changes — not applied until you save</Pill>
-          )}
-          <span className="ml-auto flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => { setCasesDraft(""); onClearCases(); }}
-              disabled={!cases.trim() && !casesDraft.trim()}
-              title="Remove the case rules and hide triage panels">
-              <Icons.x className="h-3.5 w-3.5" />Clear
-            </Button>
-            <Button size="sm" onClick={() => onSaveCases(casesDraft)} disabled={!casesDirty}
-              title={casesDirty ? "Save and apply these case rules" : "No changes to save"}>
-              <Icons.check className="h-3.5 w-3.5" />Save
-            </Button>
-          </span>
-        </div>
-        <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
-          Saved in this browser and applied to every question until you clear it.
+        <p className="mt-2.5 text-[11px] leading-relaxed text-text-faint">
+          Both are saved in this browser and applied to every question until you clear them.
+          Edit them from the bar that sits directly above the chat input.
         </p>
       </Card>
 

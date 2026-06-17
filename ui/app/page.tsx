@@ -7,6 +7,7 @@ import {
 import type { AppConfig, AskResponse, Inventory, SourceInfo } from "@/lib/types";
 import { Icons, Tabs, Toasts, cn, type ToastItem } from "@/components/ui";
 import { roleLabel } from "@/lib/role";
+import type { PromptKind } from "@/lib/prompt";
 import Chat from "@/components/Chat";
 import Sources from "@/components/Sources";
 import Inspector from "@/components/Inspector";
@@ -21,6 +22,8 @@ export default function Page() {
 
   const [tab, setTab] = React.useState<TabId>("chat");
   const [question, setQuestion] = React.useState("");
+  // Deep-link signal: Settings "Edit above" switches to Chat and opens this prompt editor.
+  const [openPrompt, setOpenPrompt] = React.useState<PromptKind | null>(null);
   const [resp, setResp] = React.useState<AskResponse | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -280,12 +283,14 @@ export default function Page() {
 
         {tab === "chat" && (
           <Chat
-            inventory={inventory} role={role}
+            inventory={inventory} role={role} cases={cases}
             question={question} setQuestion={setQuestion}
             onAsk={run} onClear={clearQuestion} resp={resp} loading={loading} error={error}
             onOpenInspector={() => setTab("inspector")}
             onOpenSources={() => setTab("sources")}
-            onOpenSettings={() => setTab("settings")}
+            onSaveRole={saveRole} onClearRole={clearRole}
+            onSaveCases={saveCases} onClearCases={clearCases}
+            openPrompt={openPrompt} onOpenPromptHandled={() => setOpenPrompt(null)}
           />
         )}
         {tab === "sources" && (
@@ -299,11 +304,11 @@ export default function Page() {
         {tab === "inspector" && <Inspector resp={resp} />}
         {tab === "settings" && (
           <Settings
-            role={role} onSaveRole={saveRole} onClearRole={clearRole}
-            cases={cases} onSaveCases={saveCases} onClearCases={clearCases}
+            role={role} cases={cases}
             config={config} sources={sources}
             onReset={handleReset} resetting={resetting} hasUploads={hasUploads}
             onOpenSources={() => setTab("sources")}
+            onEditPrompt={(kind) => { setTab("chat"); setOpenPrompt(kind); }}
             pushToast={pushToast} onRefreshConfig={refreshConfig}
           />
         )}
