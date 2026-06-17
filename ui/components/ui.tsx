@@ -159,6 +159,15 @@ export function Switch({
   );
 }
 
+/* ---------------- keyboard hint chip ---------------- */
+export function Kbd({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded border border-line bg-surface-muted px-1.5 font-mono text-[10px] font-semibold text-text-muted">
+      {children}
+    </kbd>
+  );
+}
+
 /* ---------------- route badge ---------------- */
 export const ROUTE_STYLE: Record<Route, { pill: string; dot: string; label: string }> = {
   PDF: { pill: "bg-emerald-50 text-emerald-700 ring-emerald-200", dot: "bg-emerald-500", label: "Documents" },
