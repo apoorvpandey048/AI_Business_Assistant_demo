@@ -220,10 +220,30 @@ export default function AnswerBody({
   const blocks = React.useMemo(() => parseBlocks(text), [text]);
   const dir = rtl ? "rtl" : "ltr";
 
+  // Anomaly B fix — a pipe table in the answer string is ALSO extracted server-side into
+  // `tables` (the richer StructuredTable with title + Cited chips). Rendering both yields
+  // two <table> for one logical table. When structured tables exist they are the single
+  // source of truth, so we drop the inline duplicates. Frontend-only + reversible: we
+  // never mutate the grounded answer text.
+  const hasStructured = tables.length > 0;
+  const inlineTableCount = React.useMemo(
+    () => blocks.filter((b) => b.kind === "table").length, [blocks],
+  );
+  React.useEffect(() => {
+    if (process.env.NODE_ENV !== "production" && hasStructured && inlineTableCount !== tables.length) {
+      // Drift between the inline pipe tables and the extracted structured set is worth
+      // surfacing in dev — it means the extractor missed (or over-captured) a table.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[AnswerBody] table drift: ${inlineTableCount} inline pipe table(s) vs ${tables.length} structured — suppressing inline to avoid duplicates.`,
+      );
+    }
+  }, [hasStructured, inlineTableCount, tables.length]);
+
   return (
     <div dir={dir} style={bidiPlaintext} className={cn("text-[15px] leading-[1.75] text-slate-800", rtl && "text-right")}>
       {blocks.map((b, bi) => {
-        if (b.kind === "table") return <InlineTable key={bi} header={b.header} rows={b.rows} onCite={onCite} rtl={rtl} />;
+        if (b.kind === "table") return hasStructured ? null : <InlineTable key={bi} header={b.header} rows={b.rows} onCite={onCite} rtl={rtl} />;
         if (b.kind === "ul") return (
           <ul key={bi} className={cn("my-2 space-y-1", rtl ? "mr-5 list-disc" : "ml-5 list-disc")}>
             {b.items.map((it, ii) => <li key={ii}>{renderInline(it, onCite, `ul${bi}-${ii}`)}</li>)}

@@ -1,7 +1,7 @@
 "use client";
 import React from "react";
-import type { AskResponse } from "@/lib/types";
-import { Button, Card, Icons, Pill, RouteBadge, SectionTitle, cn, isRTL } from "./ui";
+import type { AskResponse, Route } from "@/lib/types";
+import { Button, Card, Icons, Pill, RouteBadge, SectionTitle, Tooltip, cn, isRTL } from "./ui";
 import { CitationChips, EvidenceItem, useCiteHighlight } from "./trace";
 import AnswerBody from "./AnswerBody";
 import TriagePanel from "./TriagePanel";
@@ -12,6 +12,19 @@ export default function AnswerPanel({
 }: { resp: AskResponse; onOpenInspector?: () => void }) {
   const t = resp.trace;
   const { highlight, onCite } = useCiteHighlight();
+  // Anomaly A fix — the badge must reflect the ANSWER, not the router's pre-retrieval
+  // guess. When the document safety net recovers grounded evidence, the router's original
+  // "NONE · Insufficient · 0%" is stale and reads as the UI contradicting itself (a
+  // grounded, cited answer beside an "insufficient" badge). Compute an effective route:
+  const grounded = !resp.insufficient && resp.citations.length > 0;
+  const routedVia = t.safety_net && grounded;   // recovered by direct document search
+  const effectiveRoute: Route =
+    resp.insufficient ? "NONE"
+    : (!t.route || t.route.route === "NONE" || t.safety_net) ? "PDF"
+    : t.route.route;
+  // Suppress the % confidence when it's meaningless: a genuine decline, or a decision the
+  // safety net overrode. That stray "90% confidence" beside a full answer is anomaly A.
+  const showConfidence = !!t.route && !resp.insufficient && !t.safety_net;
   // Direction follows the ANSWER's dominant script — not the question language.
   // (An English fallback answer to a Hebrew question must stay LTR, and vice versa.)
   const rtlAnswer = isRTL(resp.answer);
@@ -35,9 +48,14 @@ export default function AnswerPanel({
         <div className="flex items-center gap-2">
           <Icons.route className="h-4 w-4 text-indigo-500" />
           <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400">Routed to</span>
-          {t.route ? <RouteBadge route={t.route.route} withLabel /> : <Pill>—</Pill>}
+          <RouteBadge route={effectiveRoute} withLabel />
+          {routedVia && (
+            <Tooltip label="The router found no obvious source, but a direct document search recovered grounded evidence.">
+              <span className="text-[11px] font-medium text-slate-400">· recovered</span>
+            </Tooltip>
+          )}
         </div>
-        {t.route && (
+        {showConfidence && t.route && (
           <span className="text-[12px] text-slate-500">
             {(t.route.confidence * 100).toFixed(0)}% confidence
             {t.route.agentic && " · agentic"}
@@ -57,8 +75,8 @@ export default function AnswerPanel({
         </span>
       </Card>
 
-      {/* triage panels — above the answer card; renders null unless defined */}
-      <TriagePanel triage={resp.triage} onCite={onCite} />
+      {/* triage panels — above the answer card; hidden on declines and when undefined */}
+      <TriagePanel triage={resp.triage} onCite={onCite} hidden={resp.insufficient} />
 
       {/* answer */}
       <Card className={cn("p-5", resp.insufficient && "ring-1 ring-amber-200")}>

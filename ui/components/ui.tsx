@@ -64,6 +64,39 @@ export const Icons = {
   gear: (p: IconProps) => <S {...p}><circle cx="12" cy="12" r="3.2" /><path d="M19.4 13.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.2a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.9-2.9l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1h-.2a2 2 0 1 1 0-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.9-2.9l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5v-.2a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.9 2.9l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.5 1Z" /></S>,
 };
 
+/* ---------------- tooltip ----------------
+   Lightweight hover/focus tooltip. No portal — positioned absolutely against a
+   relatively-positioned wrapper. Shows on hover AND keyboard focus (a11y), and is
+   exposed to assistive tech via aria-describedby. Pure CSS visibility toggle so it
+   honours prefers-reduced-motion automatically. */
+export function Tooltip({
+  label, children, side = "top", className,
+}: {
+  label: React.ReactNode;
+  children: React.ReactNode;
+  side?: "top" | "bottom";
+  className?: string;
+}) {
+  const id = React.useId();
+  return (
+    <span className={cn("group/tt relative inline-flex", className)}>
+      <span aria-describedby={id} tabIndex={0} className="focus-ring inline-flex rounded outline-none">
+        {children}
+      </span>
+      <span
+        role="tooltip" id={id}
+        className={cn(
+          "pointer-events-none absolute left-1/2 z-30 w-max max-w-xs -translate-x-1/2 rounded-lg px-2.5 py-1.5",
+          "text-[11.5px] font-medium leading-snug text-white shadow-lg",
+          "bg-slate-900/95 opacity-0 transition-opacity duration-150",
+          "group-hover/tt:opacity-100 group-focus-within/tt:opacity-100",
+          side === "top" ? "bottom-full mb-1.5" : "top-full mt-1.5")}>
+        {label}
+      </span>
+    </span>
+  );
+}
+
 /* ---------------- route badge ---------------- */
 export const ROUTE_STYLE: Record<Route, { pill: string; dot: string; label: string }> = {
   PDF: { pill: "bg-emerald-50 text-emerald-700 ring-emerald-200", dot: "bg-emerald-500", label: "Documents" },
