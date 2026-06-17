@@ -1,30 +1,52 @@
 "use client";
 import React from "react";
 import {
-  ask, fetchConfig, fetchInventory, fetchSources,
+  ask, askStream, fetchConfig, fetchInventory, fetchSources,
   ingestPdf, ingestSqlite, resetWorkspace,
 } from "@/lib/api";
 import type { AppConfig, AskResponse, Inventory, SourceInfo } from "@/lib/types";
-import { Icons, Tabs, Toasts, cn, type ToastItem } from "@/components/ui";
+import { Icons, Tabs, Toasts, IconButton, Kbd, cn, type ToastItem } from "@/components/ui";
 import { roleLabel } from "@/lib/role";
+import type { PromptKind } from "@/lib/prompt";
+import { useTheme } from "@/lib/theme";
 import Chat from "@/components/Chat";
 import Sources from "@/components/Sources";
 import Inspector from "@/components/Inspector";
 import Settings from "@/components/Settings";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import CommandPalette, { type Command } from "@/components/CommandPalette";
 
 type TabId = "chat" | "sources" | "inspector" | "settings";
 
 export default function Page() {
   const [config, setConfig] = React.useState<AppConfig | null>(null);
+  const [theme, , toggleTheme] = useTheme();
   const [sources, setSources] = React.useState<SourceInfo[]>([]);
   const [inventory, setInventory] = React.useState<Inventory | null>(null);
 
   const [tab, setTab] = React.useState<TabId>("chat");
   const [question, setQuestion] = React.useState("");
+  // Deep-link signal: Settings "Edit above" switches to Chat and opens this prompt editor.
+  const [openPrompt, setOpenPrompt] = React.useState<PromptKind | null>(null);
+  // Command palette (⌘K).
+  const [paletteOpen, setPaletteOpen] = React.useState(false);
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [resp, setResp] = React.useState<AskResponse | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [connecting, setConnecting] = React.useState(true);
+  // Streaming state (Phase 7): progressively revealed answer text + current pipeline stage.
+  const [streamText, setStreamText] = React.useState("");
+  const [streamStage, setStreamStage] = React.useState<string | null>(null);
 
   // Visual feedback: every state-changing action raises a toast (no silent changes).
   const [toasts, setToasts] = React.useState<ToastItem[]>([]);
@@ -123,6 +145,31 @@ export default function Page() {
     setLoading(true);
     setError(null);
     setResp(null);
+    setStreamText("");
+    setStreamStage(null);
+
+    // Try the streaming path first for the perceived-speed win. It reveals only the
+    // server-verified answer (citations gate the final payload). Any failure — offline,
+    // no live LLM, network — falls through to the robust non-streaming retry loop below.
+    try {
+      const r = await askStream(query, "workspace", role, cases, {
+        onStage: (s) => { if (!stale()) setStreamStage(s); },
+        onToken: (t) => { if (!stale()) setStreamText((prev) => prev + t); },
+      });
+      if (stale()) return;
+      setResp(r);
+      setError(null);
+      setLoading(false);
+      setStreamText("");
+      setStreamStage(null);
+      return;
+    } catch {
+      if (stale()) return;
+      setStreamText("");
+      setStreamStage(null);
+      // fall through to non-streaming
+    }
+
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
         const r = await ask(query, "workspace", role, cases);
@@ -159,6 +206,8 @@ export default function Page() {
     setResp(null);
     setError(null);
     setLoading(false);
+    setStreamText("");
+    setStreamStage(null);
   };
 
   const handlePdf = async (files: File[]) => {
@@ -235,6 +284,20 @@ export default function Page() {
     { id: "settings", label: "Settings", icon: <Icons.gear className="h-3.5 w-3.5" /> },
   ];
 
+  // Command palette actions — jump to tabs, toggle theme, edit prompts, sources.
+  const commands: Command[] = [
+    { id: "chat", label: "Go to Chat", icon: <Icons.chat className="h-4 w-4" />, run: () => setTab("chat") },
+    { id: "sources", label: "Manage sources", icon: <Icons.layers className="h-4 w-4" />, run: () => setTab("sources") },
+    { id: "inspector", label: "Open Inspector", icon: <Icons.inspect className="h-4 w-4" />, run: () => setTab("inspector") },
+    { id: "settings", label: "Open Settings", icon: <Icons.gear className="h-4 w-4" />, run: () => setTab("settings") },
+    { id: "theme", label: theme === "dark" ? "Switch to light mode" : "Switch to dark mode",
+      icon: theme === "dark" ? <Icons.sun className="h-4 w-4" /> : <Icons.moon className="h-4 w-4" />, run: toggleTheme },
+    { id: "edit-role", label: "Edit analysis mode", hint: "prompt", icon: <Icons.spark className="h-4 w-4" />,
+      run: () => { setTab("chat"); setOpenPrompt("role"); } },
+    { id: "edit-cases", label: "Edit triage rules", hint: "prompt", icon: <Icons.grid className="h-4 w-4" />,
+      run: () => { setTab("chat"); setOpenPrompt("cases"); } },
+  ];
+
   return (
     <div className="min-h-screen">
       {/* ---- top app bar ---- */}
@@ -255,6 +318,18 @@ export default function Page() {
           </div>
 
           <div className="order-2 ml-auto flex items-center gap-1.5 sm:order-3">
+            <button
+              onClick={() => setPaletteOpen(true)}
+              aria-label="Open command palette"
+              className="focus-ring hidden items-center gap-1.5 rounded-md border border-line bg-surface-muted px-2 py-1 text-[11px] font-medium text-text-muted transition hover:text-text sm:inline-flex">
+              <Icons.command className="h-3.5 w-3.5" />
+              <Kbd>⌘K</Kbd>
+            </button>
+            <IconButton
+              icon={theme === "dark" ? <Icons.sun className="h-4 w-4" /> : <Icons.moon className="h-4 w-4" />}
+              label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              onClick={toggleTheme}
+            />
             {config && (
               <>
                 <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-inset ring-slate-200">
@@ -279,14 +354,20 @@ export default function Page() {
         )}
 
         {tab === "chat" && (
+          <ErrorBoundary label="the chat">
           <Chat
-            inventory={inventory} role={role}
+            inventory={inventory} role={role} cases={cases}
             question={question} setQuestion={setQuestion}
             onAsk={run} onClear={clearQuestion} resp={resp} loading={loading} error={error}
             onOpenInspector={() => setTab("inspector")}
             onOpenSources={() => setTab("sources")}
-            onOpenSettings={() => setTab("settings")}
+            onSaveRole={saveRole} onClearRole={clearRole}
+            onSaveCases={saveCases} onClearCases={clearCases}
+            openPrompt={openPrompt} onOpenPromptHandled={() => setOpenPrompt(null)}
+            onToast={pushToast}
+            streamText={streamText} streamStage={streamStage}
           />
+          </ErrorBoundary>
         )}
         {tab === "sources" && (
           <Sources
@@ -296,20 +377,21 @@ export default function Page() {
             pdfMsg={pdfMsg} pdfErr={pdfErr} dbMsg={dbMsg} dbErr={dbErr}
           />
         )}
-        {tab === "inspector" && <Inspector resp={resp} />}
+        {tab === "inspector" && <ErrorBoundary label="the inspector"><Inspector resp={resp} /></ErrorBoundary>}
         {tab === "settings" && (
           <Settings
-            role={role} onSaveRole={saveRole} onClearRole={clearRole}
-            cases={cases} onSaveCases={saveCases} onClearCases={clearCases}
+            role={role} cases={cases}
             config={config} sources={sources}
             onReset={handleReset} resetting={resetting} hasUploads={hasUploads}
             onOpenSources={() => setTab("sources")}
+            onEditPrompt={(kind) => { setTab("chat"); setOpenPrompt(kind); }}
             pushToast={pushToast} onRefreshConfig={refreshConfig}
           />
         )}
       </main>
 
       <Toasts items={toasts} onDismiss={dismissToast} />
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
 
       <footer className="mx-auto max-w-7xl px-5 pb-8 pt-4 text-center text-[11px] leading-relaxed text-slate-400">
         Documents + databases · query routing · hybrid retrieval (dense + BM25 + RRF + rerank) ·

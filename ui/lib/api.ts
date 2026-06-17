@@ -51,6 +51,77 @@ export async function ask(
   return res.json();
 }
 
+/* ---------------- streaming ask (Phase 7) ----------------
+ * Consumes the SSE /ask/stream endpoint. Calls onStage as the pipeline advances,
+ * onToken as the (already server-verified) answer is progressively revealed, and
+ * resolves with the final complete AskResponse. The caller should fall back to the
+ * non-streaming ask() on any rejection (offline / no-live-LLM / network). */
+export interface StreamHandlers {
+  onStage?: (stage: string) => void;
+  onToken?: (text: string) => void;
+}
+
+export async function askStream(
+  question: string, scope: AskScope = "workspace",
+  roleInstructions: string | undefined, caseInstructions: string | undefined,
+  handlers: StreamHandlers = {}, signal?: AbortSignal,
+): Promise<AskResponse> {
+  const role = (roleInstructions || "").trim();
+  const cases = (caseInstructions || "").trim();
+  const res = await fetch(`${apiBase()}/ask/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question, scope,
+      ...(role ? { role_instructions: role } : {}),
+      ...(cases ? { case_instructions: cases } : {}),
+    }),
+    signal,
+  });
+  if (!res.ok || !res.body) throw new Error(`ask/stream → ${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let final: AskResponse | null = null;
+  let errorDetail: string | null = null;
+
+  // Parse the SSE byte stream into event/data frames separated by a blank line.
+  const handleFrame = (frame: string) => {
+    let event = "message";
+    const dataLines: string[] = [];
+    for (const line of frame.split("\n")) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+    }
+    if (!dataLines.length) return;
+    let data: any;
+    try { data = JSON.parse(dataLines.join("\n")); } catch { return; }
+    if (event === "stage") handlers.onStage?.(data.stage);
+    else if (event === "token") handlers.onToken?.(data.text ?? "");
+    else if (event === "final") final = data as AskResponse;
+    else if (event === "error") errorDetail = data.detail || "stream error";
+  };
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      handleFrame(frame);
+    }
+  }
+  if (buffer.trim()) handleFrame(buffer);
+
+  if (errorDetail) throw new Error(errorDetail);
+  if (!final) throw new Error("stream ended without a final answer");
+  return final;
+}
+
 async function postFiles(path: string, files: File[]): Promise<IngestResult> {
   const form = new FormData();
   for (const f of files) form.append("files", f, f.name);

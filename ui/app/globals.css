@@ -2,18 +2,106 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ------------------------------------------------------------------ *
+ * Semantic design tokens. Components reference these via Tailwind
+ * (bg-surface, text-text-muted, ring-line …) so dark mode (Phase 6) is a
+ * pure value swap under :root[data-theme="dark"] — no component changes.
+ * Light values are chosen to match the pre-token palette pixel-near.
+ * ------------------------------------------------------------------ */
 :root {
   color-scheme: light;
+
+  /* surfaces */
   --bg: #f5f6f8;
   --surface: #ffffff;
+  --surface-muted: #fafbfc;
+  --surface-raised: #ffffff;
+
+  /* text */
+  --text-strong: #0f172a;   /* slate-900 */
+  --text: #334155;          /* slate-700 */
+  --text-muted: #64748b;    /* slate-500 */
+  --text-faint: #94a3b8;    /* slate-400 */
+
+  /* lines */
   --border: #e6e8ec;
   --border-strong: #d3d7df;
+  --ring: rgba(79, 70, 229, 0.16);
+
+  /* brand + status */
   --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef2ff;   /* indigo-50 */
+  --success: #059669;
+  --success-soft: #ecfdf5;
+  --warn: #d97706;
+  --warn-soft: #fffbeb;
+  --danger: #e11d48;
+  --danger-soft: #fff1f2;
+
+  /* triage (shared by panel + any future legend) */
+  --triage-red: #e11d48;
+  --triage-red-soft: #fff1f2;
+  --triage-green: #059669;
+  --triage-green-soft: #ecfdf5;
+  --triage-blue: #0284c7;
+  --triage-blue-soft: #f0f9ff;
+
+  /* elevation + radius */
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12);
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Dark theme — only token VALUES change. Soften shadows, lift surfaces.
+ * ------------------------------------------------------------------ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0b1120;
+  --surface: #131a2a;
+  --surface-muted: #0f1626;
+  --surface-raised: #1a2236;
+
+  --text-strong: #f1f5f9;
+  --text: #cbd5e1;
+  --text-muted: #94a3b8;
+  --text-faint: #64748b;
+
+  --border: #26304a;
+  --border-strong: #334063;
+  --ring: rgba(129, 140, 248, 0.32);
+
+  --accent: #818cf8;
+  --accent-hover: #a5b4fc;
+  --accent-soft: #1e2547;
+  --success: #34d399;
+  --success-soft: #0c2a22;
+  --warn: #fbbf24;
+  --warn-soft: #2a2008;
+  --danger: #fb7185;
+  --danger-soft: #2c1019;
+
+  --triage-red: #fb7185;
+  --triage-red-soft: #2c1019;
+  --triage-green: #34d399;
+  --triage-green-soft: #0c2a22;
+  --triage-blue: #38bdf8;
+  --triage-blue-soft: #07243a;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
 }
 
 html,
 body {
-  @apply text-slate-700 antialiased;
+  @apply antialiased;
+  color: var(--text);
   background-color: var(--bg);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
     Arial, "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
@@ -24,20 +112,28 @@ body {
 .surface {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
 }
 
 .surface-muted {
-  background: #fafbfc;
+  background: var(--surface-muted);
   border: 1px solid var(--border);
   border-radius: 12px;
+}
+
+/* Raised surface for popovers / the prompt-bar editor */
+.surface-raised {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
 }
 
 /* Subtle focus ring used on inputs/buttons */
 .focus-ring:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.16);
+  box-shadow: 0 0 0 3px var(--ring);
   border-color: var(--accent);
 }
 
@@ -61,6 +157,45 @@ body {
   background: #0f172a;
   color: #e2e8f0;
   border-radius: 10px;
+}
+
+/* Skeleton shimmer (replaces bare spinners) */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-muted);
+  border-radius: 8px;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(148, 163, 184, 0.12),
+    transparent
+  );
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Streaming caret shown while answer tokens arrive */
+.stream-caret::after {
+  content: "▌";
+  margin-left: 1px;
+  color: var(--accent);
+  animation: caret-blink 1s steps(2) infinite;
+}
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
 }
 
 /* Citation pulse when a cited evidence item is focused */
@@ -125,7 +260,7 @@ body {
   left: 0;
   width: 2px;
   border-radius: 9999px;
-  background: linear-gradient(to bottom, #c7d2fe, #e6e8ec);
+  background: linear-gradient(to bottom, var(--accent), var(--border));
 }
 .timeline-rail[dir="rtl"]::before {
   left: auto;
@@ -142,3 +277,75 @@ body {
   border-color: var(--accent);
   background: rgba(79, 70, 229, 0.04);
 }
+
+/* Honour reduced-motion: disable all non-essential animation. */
+@media (prefers-reduced-motion: reduce) {
+  .fade-up,
+  .cite-pulse,
+  .skeleton::after,
+  .stream-caret::after,
+  .progress-indeterminate::after {
+    animation: none !important;
+  }
+  * {
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Dark-mode compatibility layer.
+ *
+ * Components still use raw slate / white Tailwind utilities in many places.
+ * Rather than rewrite every file (regression-prone), we remap the utilities
+ * actually in use to theme tokens — but ONLY under [data-theme="dark"]. The
+ * attribute+class selector outranks the bare utility, so LIGHT MODE IS
+ * COMPLETELY UNTOUCHED (these rules never apply there). New components built
+ * on tokens (bg-surface, text-text-muted …) need none of this.
+ * ------------------------------------------------------------------ */
+:root[data-theme="dark"] {
+  /* text */
+  --map-text-900: var(--text-strong);
+  --map-text-800: var(--text-strong);
+  --map-text-700: var(--text);
+  --map-text-600: var(--text);
+  --map-text-500: var(--text-muted);
+  --map-text-400: var(--text-faint);
+  --map-text-300: var(--text-faint);
+}
+:root[data-theme="dark"] .text-slate-900 { color: var(--text-strong); }
+:root[data-theme="dark"] .text-slate-800 { color: var(--text-strong); }
+:root[data-theme="dark"] .text-slate-700 { color: var(--text); }
+:root[data-theme="dark"] .text-slate-600 { color: var(--text); }
+:root[data-theme="dark"] .text-slate-500 { color: var(--text-muted); }
+:root[data-theme="dark"] .text-slate-400 { color: var(--text-faint); }
+:root[data-theme="dark"] .text-slate-300 { color: var(--text-faint); }
+:root[data-theme="dark"] .placeholder\:text-slate-400::placeholder { color: var(--text-faint); }
+
+:root[data-theme="dark"] .bg-white { background-color: var(--surface); }
+:root[data-theme="dark"] .bg-slate-50 { background-color: var(--surface-muted); }
+:root[data-theme="dark"] .bg-slate-100 { background-color: var(--surface-raised); }
+:root[data-theme="dark"] .bg-slate-300 { background-color: var(--border-strong); }
+:root[data-theme="dark"] .bg-slate-400 { background-color: var(--text-faint); }
+/* opacity-suffixed surfaces (sticky table headers, top bar) */
+:root[data-theme="dark"] .bg-white\/85 { background-color: color-mix(in srgb, var(--surface) 85%, transparent); }
+:root[data-theme="dark"] .bg-slate-100\/95 { background-color: color-mix(in srgb, var(--surface-raised) 95%, transparent); }
+:root[data-theme="dark"] .bg-slate-50\/60 { background-color: color-mix(in srgb, var(--surface-muted) 60%, transparent); }
+
+:root[data-theme="dark"] .border-slate-100 { border-color: var(--border); }
+:root[data-theme="dark"] .border-slate-200 { border-color: var(--border); }
+:root[data-theme="dark"] .border-slate-300 { border-color: var(--border-strong); }
+:root[data-theme="dark"] .ring-slate-200 { --tw-ring-color: var(--border); }
+
+:root[data-theme="dark"] .hover\:bg-slate-50:hover { background-color: var(--surface-muted); }
+:root[data-theme="dark"] .hover\:bg-slate-100:hover { background-color: var(--surface-raised); }
+
+/* Tinted status pills (emerald/amber/sky/indigo/rose -50 backgrounds) read as
+   near-white in dark; nudge them onto soft token tints so text stays legible. */
+:root[data-theme="dark"] .bg-emerald-50 { background-color: var(--success-soft); }
+:root[data-theme="dark"] .bg-amber-50 { background-color: var(--warn-soft); }
+:root[data-theme="dark"] .bg-rose-50 { background-color: var(--danger-soft); }
+:root[data-theme="dark"] .bg-indigo-50 { background-color: var(--accent-soft); }
+:root[data-theme="dark"] .bg-sky-50 { background-color: var(--triage-blue-soft); }
+:root[data-theme="dark"] .text-indigo-600 { color: var(--accent); }
+:root[data-theme="dark"] .text-indigo-700 { color: var(--accent); }
+

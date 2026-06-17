@@ -62,7 +62,111 @@ export const Icons = {
   grid: (p: IconProps) => <S {...p}><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></S>,
   chat: (p: IconProps) => <S {...p}><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-2.9-.4-4.1-1L3 20l1-5.4A8.5 8.5 0 1 1 21 11.5Z" /></S>,
   gear: (p: IconProps) => <S {...p}><circle cx="12" cy="12" r="3.2" /><path d="M19.4 13.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.2a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.9-2.9l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1h-.2a2 2 0 1 1 0-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.9-2.9l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5v-.2a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.9 2.9l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.5 1Z" /></S>,
+  copy: (p: IconProps) => <S {...p}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h8" /></S>,
+  download: (p: IconProps) => <S {...p}><path d="M12 3v12M8 11l4 4 4-4" /><path d="M5 19h14" /></S>,
+  sun: (p: IconProps) => <S {...p}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></S>,
+  moon: (p: IconProps) => <S {...p}><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" /></S>,
+  command: (p: IconProps) => <S {...p}><path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3Z" /></S>,
 };
+
+/* ---------------- tooltip ----------------
+   Lightweight hover/focus tooltip. No portal — positioned absolutely against a
+   relatively-positioned wrapper. Shows on hover AND keyboard focus (a11y), and is
+   exposed to assistive tech via aria-describedby. Pure CSS visibility toggle so it
+   honours prefers-reduced-motion automatically. */
+export function Tooltip({
+  label, children, side = "top", className,
+}: {
+  label: React.ReactNode;
+  children: React.ReactNode;
+  side?: "top" | "bottom";
+  className?: string;
+}) {
+  const id = React.useId();
+  return (
+    <span className={cn("group/tt relative inline-flex", className)}>
+      <span aria-describedby={id} tabIndex={0} className="focus-ring inline-flex rounded outline-none">
+        {children}
+      </span>
+      <span
+        role="tooltip" id={id}
+        className={cn(
+          "pointer-events-none absolute left-1/2 z-30 w-max max-w-xs -translate-x-1/2 rounded-lg px-2.5 py-1.5",
+          "text-[11.5px] font-medium leading-snug text-white shadow-lg",
+          "bg-slate-900/95 opacity-0 transition-opacity duration-150",
+          "group-hover/tt:opacity-100 group-focus-within/tt:opacity-100",
+          side === "top" ? "bottom-full mb-1.5" : "top-full mt-1.5")}>
+        {label}
+      </span>
+    </span>
+  );
+}
+
+/* ---------------- icon button ----------------
+   Compact icon-only action with an accessible label (tooltip + aria-label). */
+export function IconButton({
+  icon, label, onClick, disabled, className, tone = "default",
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  className?: string;
+  tone?: "default" | "accent";
+}) {
+  return (
+    <Tooltip label={label}>
+      <button
+        type="button" onClick={onClick} disabled={disabled} aria-label={label}
+        className={cn(
+          "focus-ring inline-flex h-8 w-8 items-center justify-center rounded-lg transition disabled:opacity-40",
+          tone === "accent"
+            ? "text-accent hover:bg-accent-soft"
+            : "text-text-muted hover:bg-surface-muted hover:text-text",
+          className)}>
+        {icon}
+      </button>
+    </Tooltip>
+  );
+}
+
+/* ---------------- skeleton ----------------
+   Shimmer placeholder (see .skeleton in globals.css). */
+export function Skeleton({ className }: { className?: string }) {
+  return <span className={cn("skeleton block", className)} aria-hidden />;
+}
+
+/* ---------------- switch ----------------
+   Accessible toggle (role=switch). Used by the dark-mode toggle. */
+export function Switch({
+  checked, onChange, label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button" role="switch" aria-checked={checked} aria-label={label}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        "focus-ring relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition",
+        checked ? "bg-accent" : "bg-line-strong")}>
+      <span className={cn(
+        "inline-block h-4 w-4 transform rounded-full bg-white shadow transition",
+        checked ? "translate-x-4" : "translate-x-0.5")} />
+    </button>
+  );
+}
+
+/* ---------------- keyboard hint chip ---------------- */
+export function Kbd({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded border border-line bg-surface-muted px-1.5 font-mono text-[10px] font-semibold text-text-muted">
+      {children}
+    </kbd>
+  );
+}
 
 /* ---------------- route badge ---------------- */
 export const ROUTE_STYLE: Record<Route, { pill: string; dot: string; label: string }> = {
@@ -173,11 +277,11 @@ export function Tabs<T extends string>({
   onChange: (id: T) => void;
 }) {
   return (
-    <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+    <div role="tablist" aria-label="Sections" className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
       {tabs.map((t) => (
-        <button key={t.id} onClick={() => onChange(t.id)}
+        <button key={t.id} role="tab" aria-selected={active === t.id} onClick={() => onChange(t.id)}
           className={cn(
-            "inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold transition",
+            "focus-ring inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold transition",
             active === t.id
               ? "bg-indigo-600 text-white shadow-sm"
               : "text-slate-500 hover:bg-slate-100 hover:text-slate-700")}>
@@ -201,7 +305,7 @@ export function Collapsible({
   const [open, setOpen] = React.useState(defaultOpen);
   return (
     <Card>
-      <button onClick={() => setOpen((o) => !o)}
+      <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
         className="flex w-full items-center justify-between rounded-t-[14px] px-4 py-3 text-left transition hover:bg-slate-50">
         <span className="flex items-center gap-2.5 text-sm font-semibold text-slate-800">
           <Icons.chevron className={cn("h-3.5 w-3.5 text-slate-400 transition-transform", open && "rotate-90")} />

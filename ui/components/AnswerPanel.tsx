@@ -1,17 +1,31 @@
 "use client";
 import React from "react";
-import type { AskResponse } from "@/lib/types";
-import { Button, Card, Icons, Pill, RouteBadge, SectionTitle, cn, isRTL } from "./ui";
-import { CitationChips, EvidenceItem, useCiteHighlight } from "./trace";
+import type { AskResponse, Route } from "@/lib/types";
+import { Button, Card, Icons, Pill, RouteBadge, SectionTitle, Tooltip, cn, isRTL } from "./ui";
+import { CitationChips, EvidenceItem, EvidenceMapContext, buildEvidenceMap, useCiteHighlight } from "./trace";
 import AnswerBody from "./AnswerBody";
+import AnswerActions from "./AnswerActions";
 import TriagePanel from "./TriagePanel";
 import Timeline from "./Timeline";
 
 export default function AnswerPanel({
-  resp, onOpenInspector,
-}: { resp: AskResponse; onOpenInspector?: () => void }) {
+  resp, onOpenInspector, onToast,
+}: { resp: AskResponse; onOpenInspector?: () => void; onToast?: (msg: string, tone?: "success" | "error" | "info") => void }) {
   const t = resp.trace;
   const { highlight, onCite } = useCiteHighlight();
+  // Anomaly A fix — the badge must reflect the ANSWER, not the router's pre-retrieval
+  // guess. When the document safety net recovers grounded evidence, the router's original
+  // "NONE · Insufficient · 0%" is stale and reads as the UI contradicting itself (a
+  // grounded, cited answer beside an "insufficient" badge). Compute an effective route:
+  const grounded = !resp.insufficient && resp.citations.length > 0;
+  const routedVia = t.safety_net && grounded;   // recovered by direct document search
+  const effectiveRoute: Route =
+    resp.insufficient ? "NONE"
+    : (!t.route || t.route.route === "NONE" || t.safety_net) ? "PDF"
+    : t.route.route;
+  // Suppress the % confidence when it's meaningless: a genuine decline, or a decision the
+  // safety net overrode. That stray "90% confidence" beside a full answer is anomaly A.
+  const showConfidence = !!t.route && !resp.insufficient && !t.safety_net;
   // Direction follows the ANSWER's dominant script — not the question language.
   // (An English fallback answer to a Hebrew question must stay LTR, and vice versa.)
   const rtlAnswer = isRTL(resp.answer);
@@ -27,17 +41,27 @@ export default function AnswerPanel({
   const supportingHint = supporting.length === t.evidence.length
     ? `${supporting.length} item(s)`
     : `${supporting.length} of ${t.evidence.length} retrieved`;
+  // Evidence lookup so [eN] chips can preview the cited passage on hover (Phase 5).
+  const evidenceMap = React.useMemo(
+    () => buildEvidenceMap([...t.evidence, ...resp.citations]), [t.evidence, resp.citations],
+  );
 
   return (
+    <EvidenceMapContext.Provider value={evidenceMap}>
     <div className="fade-up space-y-4">
       {/* routing summary */}
       <Card className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
         <div className="flex items-center gap-2">
           <Icons.route className="h-4 w-4 text-indigo-500" />
           <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400">Routed to</span>
-          {t.route ? <RouteBadge route={t.route.route} withLabel /> : <Pill>—</Pill>}
+          <RouteBadge route={effectiveRoute} withLabel />
+          {routedVia && (
+            <Tooltip label="The router found no obvious source, but a direct document search recovered grounded evidence.">
+              <span className="text-[11px] font-medium text-slate-400">· recovered</span>
+            </Tooltip>
+          )}
         </div>
-        {t.route && (
+        {showConfidence && t.route && (
           <span className="text-[12px] text-slate-500">
             {(t.route.confidence * 100).toFixed(0)}% confidence
             {t.route.agentic && " · agentic"}
@@ -57,18 +81,21 @@ export default function AnswerPanel({
         </span>
       </Card>
 
-      {/* triage panels — above the answer card; renders null unless defined */}
-      <TriagePanel triage={resp.triage} onCite={onCite} />
+      {/* triage panels — above the answer card; hidden on declines and when undefined */}
+      <TriagePanel triage={resp.triage} onCite={onCite} hidden={resp.insufficient} />
 
       {/* answer */}
       <Card className={cn("p-5", resp.insufficient && "ring-1 ring-amber-200")}>
         <div className="mb-3 flex items-center justify-between">
           <SectionTitle>Answer</SectionTitle>
-          {onOpenInspector && (
-            <Button variant="ghost" size="sm" onClick={onOpenInspector}>
-              <Icons.inspect className="h-3.5 w-3.5" />View retrieval trace
-            </Button>
-          )}
+          <div className="flex items-center gap-1">
+            {!resp.insufficient && onToast && <AnswerActions resp={resp} onToast={onToast} />}
+            {onOpenInspector && (
+              <Button variant="ghost" size="sm" onClick={onOpenInspector}>
+                <Icons.inspect className="h-3.5 w-3.5" />View retrieval trace
+              </Button>
+            )}
+          </div>
         </div>
         {resp.insufficient && (
           <div className="mb-3"><Pill tone="amber"><Icons.alert className="h-3 w-3" />Insufficient evidence — not answered</Pill></div>
@@ -102,5 +129,6 @@ export default function AnswerPanel({
         </Card>
       )}
     </div>
+    </EvidenceMapContext.Provider>
   );
 }
