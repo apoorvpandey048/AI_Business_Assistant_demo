@@ -26,7 +26,8 @@ function CiteButton({ id, onCite }: { id: string; onCite: Cite }) {
     <CitePreview id={id}>
       <button
         onClick={() => onCite(id)}
-        className="mx-0.5 inline-flex -translate-y-0.5 items-center rounded-md bg-indigo-50 px-1.5 text-[10px] font-bold text-indigo-600 ring-1 ring-indigo-200 transition hover:bg-indigo-100"
+        aria-label={`Citation ${id} — jump to source`}
+        className="focus-ring mx-0.5 inline-flex -translate-y-0.5 items-center rounded-md bg-indigo-50 px-1.5 text-[10px] font-bold text-indigo-600 ring-1 ring-indigo-200 transition hover:bg-indigo-100"
       >
         {id}
       </button>

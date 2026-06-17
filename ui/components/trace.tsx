@@ -105,8 +105,8 @@ export function CitationChips({ citations, onCite }: { citations: Evidence[]; on
     <div className="flex flex-wrap gap-2">
       {citations.map((c) => (
         <CitePreview key={c.id} id={c.id}>
-          <button onClick={() => onCite(c.id)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] transition hover:border-indigo-300 hover:bg-indigo-50">
+          <button onClick={() => onCite(c.id)} aria-label={`Citation ${c.id} — ${c.citation_label}`}
+            className="focus-ring inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] transition hover:border-indigo-300 hover:bg-indigo-50">
             <span className="font-mono font-bold text-indigo-600">{c.id}</span>
             {c.source_kind === "relational" ? <Icons.db className="h-3 w-3 text-sky-500" /> : <Icons.doc className="h-3 w-3 text-emerald-500" />}
             <span className="text-slate-500">{c.citation_label}</span>

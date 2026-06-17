@@ -268,11 +268,11 @@ export function Tabs<T extends string>({
   onChange: (id: T) => void;
 }) {
   return (
-    <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+    <div role="tablist" aria-label="Sections" className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
       {tabs.map((t) => (
-        <button key={t.id} onClick={() => onChange(t.id)}
+        <button key={t.id} role="tab" aria-selected={active === t.id} onClick={() => onChange(t.id)}
           className={cn(
-            "inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold transition",
+            "focus-ring inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold transition",
             active === t.id
               ? "bg-indigo-600 text-white shadow-sm"
               : "text-slate-500 hover:bg-slate-100 hover:text-slate-700")}>
@@ -296,7 +296,7 @@ export function Collapsible({
   const [open, setOpen] = React.useState(defaultOpen);
   return (
     <Card>
-      <button onClick={() => setOpen((o) => !o)}
+      <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
         className="flex w-full items-center justify-between rounded-t-[14px] px-4 py-3 text-left transition hover:bg-slate-50">
         <span className="flex items-center gap-2.5 text-sm font-semibold text-slate-800">
           <Icons.chevron className={cn("h-3.5 w-3.5 text-slate-400 transition-transform", open && "rotate-90")} />

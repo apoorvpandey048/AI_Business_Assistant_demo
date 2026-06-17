@@ -15,8 +15,8 @@ type Cite = (id: string) => void;
 
 function CiteChip({ id, onCite }: { id: string; onCite: Cite }) {
   return (
-    <button onClick={() => onCite(id)}
-      className="inline-flex items-center rounded-md bg-indigo-50 px-1.5 text-[10px] font-bold text-indigo-600 ring-1 ring-indigo-200 transition hover:bg-indigo-100">
+    <button onClick={() => onCite(id)} aria-label={`Citation ${id} — jump to source`}
+      className="focus-ring inline-flex items-center rounded-md bg-indigo-50 px-1.5 text-[10px] font-bold text-indigo-600 ring-1 ring-indigo-200 transition hover:bg-indigo-100">
       {id}
     </button>
   );
