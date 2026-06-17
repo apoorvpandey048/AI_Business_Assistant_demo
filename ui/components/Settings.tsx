@@ -3,7 +3,8 @@ import React from "react";
 import type { AppConfig, SourceInfo } from "@/lib/types";
 import { roleLabel } from "@/lib/role";
 import type { PromptKind } from "@/lib/prompt";
-import { Button, Card, Icons, Pill, SectionTitle, cn } from "./ui";
+import { useTheme } from "@/lib/theme";
+import { Button, Card, Icons, Pill, SectionTitle, Switch, cn } from "./ui";
 import ProviderSettings from "./ProviderSettings";
 import type { ToastItem } from "./ui";
 
@@ -35,6 +36,7 @@ export default function Settings({
   pushToast: (message: string, tone?: ToastItem["tone"]) => void;
   onRefreshConfig: () => void;        // refresh /config after a provider switch (top-bar)
 }) {
+  const [theme, setTheme] = useTheme();
   const confirmReset = () => {
     if (window.confirm(
       "Remove all uploaded sources and clear the current conversation?\n\n" +
@@ -86,6 +88,21 @@ export default function Settings({
         <p className="mt-2.5 text-[11px] leading-relaxed text-text-faint">
           Both are saved in this browser and applied to every question until you clear them.
           Edit them from the bar that sits directly above the chat input.
+        </p>
+      </Card>
+
+      {/* ---- appearance (theme) ---- */}
+      <Card className="p-4 lg:col-span-2">
+        <SectionTitle>Appearance</SectionTitle>
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-2 text-[12.5px] text-text-muted">
+            {theme === "dark" ? <Icons.moon className="h-4 w-4 text-accent" /> : <Icons.sun className="h-4 w-4 text-accent" />}
+            Dark mode
+          </span>
+          <Switch checked={theme === "dark"} onChange={(v) => setTheme(v ? "dark" : "light")} label="Toggle dark mode" />
+        </div>
+        <p className="mt-2 text-[11px] leading-relaxed text-text-faint">
+          Follows your system setting until you choose here; your choice is saved in this browser.
         </p>
       </Card>
 

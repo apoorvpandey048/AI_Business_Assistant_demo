@@ -5,9 +5,10 @@ import {
   ingestPdf, ingestSqlite, resetWorkspace,
 } from "@/lib/api";
 import type { AppConfig, AskResponse, Inventory, SourceInfo } from "@/lib/types";
-import { Icons, Tabs, Toasts, cn, type ToastItem } from "@/components/ui";
+import { Icons, Tabs, Toasts, IconButton, cn, type ToastItem } from "@/components/ui";
 import { roleLabel } from "@/lib/role";
 import type { PromptKind } from "@/lib/prompt";
+import { useTheme } from "@/lib/theme";
 import Chat from "@/components/Chat";
 import Sources from "@/components/Sources";
 import Inspector from "@/components/Inspector";
@@ -17,6 +18,7 @@ type TabId = "chat" | "sources" | "inspector" | "settings";
 
 export default function Page() {
   const [config, setConfig] = React.useState<AppConfig | null>(null);
+  const [theme, , toggleTheme] = useTheme();
   const [sources, setSources] = React.useState<SourceInfo[]>([]);
   const [inventory, setInventory] = React.useState<Inventory | null>(null);
 
@@ -258,6 +260,11 @@ export default function Page() {
           </div>
 
           <div className="order-2 ml-auto flex items-center gap-1.5 sm:order-3">
+            <IconButton
+              icon={theme === "dark" ? <Icons.sun className="h-4 w-4" /> : <Icons.moon className="h-4 w-4" />}
+              label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              onClick={toggleTheme}
+            />
             {config && (
               <>
                 <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-inset ring-slate-200">

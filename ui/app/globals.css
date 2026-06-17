@@ -291,3 +291,61 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * Dark-mode compatibility layer.
+ *
+ * Components still use raw slate / white Tailwind utilities in many places.
+ * Rather than rewrite every file (regression-prone), we remap the utilities
+ * actually in use to theme tokens — but ONLY under [data-theme="dark"]. The
+ * attribute+class selector outranks the bare utility, so LIGHT MODE IS
+ * COMPLETELY UNTOUCHED (these rules never apply there). New components built
+ * on tokens (bg-surface, text-text-muted …) need none of this.
+ * ------------------------------------------------------------------ */
+:root[data-theme="dark"] {
+  /* text */
+  --map-text-900: var(--text-strong);
+  --map-text-800: var(--text-strong);
+  --map-text-700: var(--text);
+  --map-text-600: var(--text);
+  --map-text-500: var(--text-muted);
+  --map-text-400: var(--text-faint);
+  --map-text-300: var(--text-faint);
+}
+:root[data-theme="dark"] .text-slate-900 { color: var(--text-strong); }
+:root[data-theme="dark"] .text-slate-800 { color: var(--text-strong); }
+:root[data-theme="dark"] .text-slate-700 { color: var(--text); }
+:root[data-theme="dark"] .text-slate-600 { color: var(--text); }
+:root[data-theme="dark"] .text-slate-500 { color: var(--text-muted); }
+:root[data-theme="dark"] .text-slate-400 { color: var(--text-faint); }
+:root[data-theme="dark"] .text-slate-300 { color: var(--text-faint); }
+:root[data-theme="dark"] .placeholder\:text-slate-400::placeholder { color: var(--text-faint); }
+
+:root[data-theme="dark"] .bg-white { background-color: var(--surface); }
+:root[data-theme="dark"] .bg-slate-50 { background-color: var(--surface-muted); }
+:root[data-theme="dark"] .bg-slate-100 { background-color: var(--surface-raised); }
+:root[data-theme="dark"] .bg-slate-300 { background-color: var(--border-strong); }
+:root[data-theme="dark"] .bg-slate-400 { background-color: var(--text-faint); }
+/* opacity-suffixed surfaces (sticky table headers, top bar) */
+:root[data-theme="dark"] .bg-white\/85 { background-color: color-mix(in srgb, var(--surface) 85%, transparent); }
+:root[data-theme="dark"] .bg-slate-100\/95 { background-color: color-mix(in srgb, var(--surface-raised) 95%, transparent); }
+:root[data-theme="dark"] .bg-slate-50\/60 { background-color: color-mix(in srgb, var(--surface-muted) 60%, transparent); }
+
+:root[data-theme="dark"] .border-slate-100 { border-color: var(--border); }
+:root[data-theme="dark"] .border-slate-200 { border-color: var(--border); }
+:root[data-theme="dark"] .border-slate-300 { border-color: var(--border-strong); }
+:root[data-theme="dark"] .ring-slate-200 { --tw-ring-color: var(--border); }
+
+:root[data-theme="dark"] .hover\:bg-slate-50:hover { background-color: var(--surface-muted); }
+:root[data-theme="dark"] .hover\:bg-slate-100:hover { background-color: var(--surface-raised); }
+
+/* Tinted status pills (emerald/amber/sky/indigo/rose -50 backgrounds) read as
+   near-white in dark; nudge them onto soft token tints so text stays legible. */
+:root[data-theme="dark"] .bg-emerald-50 { background-color: var(--success-soft); }
+:root[data-theme="dark"] .bg-amber-50 { background-color: var(--warn-soft); }
+:root[data-theme="dark"] .bg-rose-50 { background-color: var(--danger-soft); }
+:root[data-theme="dark"] .bg-indigo-50 { background-color: var(--accent-soft); }
+:root[data-theme="dark"] .bg-sky-50 { background-color: var(--triage-blue-soft); }
+:root[data-theme="dark"] .text-indigo-600 { color: var(--accent); }
+:root[data-theme="dark"] .text-indigo-700 { color: var(--accent); }
+
